@@ -1,268 +1,510 @@
 # dblstreamgen - Quick Start Guide
 
+**Version**: v0.1.0  
+**Target**: Databricks Runtime 15.4 LTS or above
+
 Get up and running with `dblstreamgen` in minutes!
+
+---
+
+## Overview
+
+`dblstreamgen` is a Spark/Databricks library for generating synthetic streaming data using `dbldatagen`. It supports multiple event types, weighted rate distribution, and streaming to various sinks (Kinesis, Kafka, Event Hubs, Delta).
+
+**Key Features**:
+- 🎯 **Config-driven** - Define schemas in YAML
+- ⚡ **dbldatagen-powered** - Leverages Spark for scale
+- 🔀 **Multiple event types** - Union strategy for 10K+ types
+- 📤 **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta (planned)
+- 🎲 **Use-case agnostic** - Works for any domain
+
+---
 
 ## Installation
 
-### 1. Install the library
+### Option 1: Databricks (Recommended)
+
+#### Step 1: Upload Wheel to Unity Catalog Volume
+
+```python
+# In a Databricks notebook
+# Create a volume if needed
+%sql
+CREATE VOLUME IF NOT EXISTS catalog.schema.libraries;
+
+# Upload the wheel using Databricks UI or CLI
+# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+```
+
+#### Step 2: Install in Notebook
+
+```python
+# Install the library
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+
+# Restart Python to load the library
+dbutils.library.restartPython()
+```
+
+#### Step 3: Verify Installation
+
+```python
+import dblstreamgen
+
+print(f"✅ dblstreamgen v{dblstreamgen.__version__} installed successfully!")
+```
+
+### Option 2: Local Development (Limited)
+
+**Note**: v0.1.0 requires PySpark and is designed for Databricks. Local use is limited.
 
 ```bash
-# From the project root
-cd /path/to/dblstreamgen
+# Install from wheel
+pip install dist/dblstreamgen-0.1.0-py3-none-any.whl
 
-# Install in development mode
+# Or install in development mode
 pip install -e .
-
-# Or install with dependencies
-pip install -e ".[all]"
 ```
 
-### 2. Install dependencies
+---
 
-```bash
-# Required
-pip install pyyaml boto3
+## Quick Start (5 Minutes)
 
-# For future features
-pip install pyspark dbldatagen confluent-kafka fastavro
-```
+### Step 1: Create Configuration
 
-## Quick Test (5 minutes)
-
-### Step 1: Configure AWS Kinesis
-
-Edit `examples/config_source_kinesis.yaml`:
+Create a config file or use the example:
 
 ```yaml
-kinesis_config:
-  stream_name: "your-stream-name"  # ← Change this
+# my_config.yaml
+common_fields:
+  user_id:
+    type: "int"
+    range: [1, 10000]
+  session_id:
+    type: "uuid"
+
+event_types:
+  - event_type_id: "page_view"
+    weight: 0.6  # 60% of events
+    fields:
+      page_url:
+        type: "string"
+        values: ["/home", "/products", "/cart", "/checkout"]
+        weights: [0.4, 0.3, 0.2, 0.1]
+      duration_seconds:
+        type: "int"
+        range: [1, 300]
+  
+  - event_type_id: "purchase"
+    weight: 0.3  # 30% of events
+    fields:
+      product_id:
+        type: "int"
+        range: [1, 1000]
+      amount:
+        type: "float"
+        range: [10.0, 500.0]
+  
+  - event_type_id: "user_signup"
+    weight: 0.1  # 10% of events
+    fields:
+      email_domain:
+        type: "string"
+        values: ["gmail.com", "yahoo.com", "outlook.com"]
+
+generation_mode: "streaming"
+
+streaming_config:
+  total_rows_per_second: 1000
+
+batch_config:
+  total_rows: 100000
+  partitions: 8
+
+serialization_format: "json"
+
+sink_config:
+  type: "kinesis"
+  stream_name: "my-test-stream"
   region: "us-east-1"
-  aws_access_key_id: "YOUR_KEY"    # ← Add your credentials
-  aws_secret_access_key: "YOUR_SECRET"
+  partition_key_field: "user_id"
+  auto_shard_calculation: true
+  max_parallel_requests: 10
+  aws_access_key_id: "{{secrets/my-scope/aws-key}}"
+  aws_secret_access_key: "{{secrets/my-scope/aws-secret}}"
 ```
 
-**Alternative**: Use AWS credentials from environment variables or IAM role by removing the `aws_access_key_id` and `aws_secret_access_key` lines.
+Upload to Unity Catalog volume:
+```bash
+# Upload via Databricks UI or CLI to:
+# /Volumes/catalog/schema/configs/my_config.yaml
+```
 
-### Step 2: Run the test
+### Step 2: Generate and Stream Data
+
+```python
+from pyspark.sql import SparkSession
+import dblstreamgen
+
+# Get Spark session
+spark = SparkSession.getActiveSession()
+
+# Load configuration
+config = dblstreamgen.load_config("/Volumes/catalog/schema/configs/my_config.yaml")
+
+# Create orchestrator
+orchestrator = dblstreamgen.StreamOrchestrator(spark, config)
+
+# Generate unified stream
+unified_stream = orchestrator.create_unified_stream()
+
+# Display the stream schema
+unified_stream.printSchema()
+
+# Preview the data (for testing)
+display(unified_stream)
+```
+
+### Step 3: Write to Kinesis
+
+```python
+# Register Kinesis DataSource
+spark.dataSource.register(dblstreamgen.KinesisDataSource)
+
+# Get AWS credentials from Databricks secrets
+aws_key = dbutils.secrets.get("my-scope", "aws-key")
+aws_secret = dbutils.secrets.get("my-scope", "aws-secret")
+
+# Write stream to Kinesis
+query = unified_stream.writeStream \
+    .format("dblstreamgen_kinesis") \
+    .option("stream_name", "my-test-stream") \
+    .option("region", "us-east-1") \
+    .option("partition_key_field", "user_id") \
+    .option("aws_access_key_id", aws_key) \
+    .option("aws_secret_access_key", aws_secret) \
+    .option("max_parallel_requests", 10) \
+    .option("checkpointLocation", "/tmp/checkpoints/kinesis") \
+    .start()
+
+# Monitor the stream
+query.status
+
+# Stop after some time
+# query.stop()
+```
+
+### Step 4: Verify Events in Kinesis
 
 ```bash
-python examples/simple_test.py
-```
-
-You should see:
-```
-======================================================================
-dblstreamgen - Simple Test
-======================================================================
-
-Loading configuration...
-✓ Configuration loaded
-  - Event types: 3
-  - Target rate: 100 events/sec
-  - Kinesis stream: your-stream-name
-
-Creating generator...
-✓ StreamGenerator created
-
-Creating publisher...
-✓ KinesisPublisher created
-
-Starting generation (duration: 60s)...
-----------------------------------------------------------------------
-  Progress: 1,000 events sent (100 events/sec)
-  Progress: 2,000 events sent (100 events/sec)
-  ...
-```
-
-### Step 3: Verify events in Kinesis
-
-Check AWS Console or use CLI:
-
-```bash
+# Using AWS CLI
 aws kinesis get-records \
   --shard-iterator $(aws kinesis get-shard-iterator \
-    --stream-name your-stream-name \
+    --stream-name my-test-stream \
     --shard-id shardId-000000000000 \
     --shard-iterator-type LATEST \
     --query 'ShardIterator' --output text) \
   --limit 10
 ```
 
-## Usage in Your Code
+---
 
-### Basic Example
+## Configuration Guide
 
-```python
-import dblstreamgen
-import time
-
-# Load configuration
-config = dblstreamgen.load_config(
-    'examples/config_generation.yaml',
-    'examples/config_source_kinesis.yaml'
-)
-
-# Create generator and publisher
-generator = dblstreamgen.StreamGenerator(config)
-publisher = dblstreamgen.KinesisPublisher(config['kinesis_config'])
-
-# Generate for 5 minutes
-start_time = time.time()
-batch_buffer = []
-
-for event in generator.generate():
-    batch_buffer.append(event)
-    
-    # Publish in batches of 100
-    if len(batch_buffer) >= 100:
-        result = publisher.publish_batch(batch_buffer)
-        print(f"Sent {result.records_sent} events")
-        batch_buffer = []
-    
-    # Stop after 5 minutes
-    if time.time() - start_time > 300:
-        generator.stop()
-        break
-
-# Cleanup
-publisher.close()
-```
-
-### Custom Configuration
-
-Create your own config files:
+### Event Type Structure
 
 ```yaml
-# my_config_generation.yaml
 event_types:
-  - event_type_id: "user.signup"
-    weight: 0.10  # 10% of events
-    avg_payload_kb: 2
+  - event_type_id: "my_event"      # Unique identifier
+    weight: 0.5                     # Proportion of total rate (must sum to 1.0)
+    fields:                         # Event-specific fields
+      field_name:
+        type: "int"                 # Field type
+        range: [1, 100]             # Type-specific config
+```
+
+### Field Types
+
+| Type | Configuration | Example |
+|------|--------------|---------|
+| `uuid` | None | `session_id: {type: "uuid"}` |
+| `int` | `range: [min, max]` | `user_id: {type: "int", range: [1, 10000]}` |
+| `float` | `range: [min, max]` | `amount: {type: "float", range: [0.99, 99.99]}` |
+| `string` | `values: [...]` or `values: [...], weights: [...]` | `status: {type: "string", values: ["active", "inactive"]}` |
+| `timestamp` | None (uses current time) | `created_at: {type: "timestamp"}` |
+
+### Common Fields
+
+Fields shared across all event types:
+
+```yaml
+common_fields:
+  user_id:
+    type: "int"
+    range: [1, 1000000]
+  session_id:
+    type: "uuid"
+  region:
+    type: "string"
+    values: ["us-east-1", "us-west-2", "eu-west-1"]
+    weights: [0.5, 0.3, 0.2]
+```
+
+### Weights Must Sum to 1.0
+
+```yaml
+event_types:
+  - event_type_id: "type_a"
+    weight: 0.6    # 60%
+  - event_type_id: "type_b"
+    weight: 0.3    # 30%
+  - event_type_id: "type_c"
+    weight: 0.1    # 10%
+# Total: 1.0 ✅
+```
+
+---
+
+## Common Use Cases
+
+### E-commerce Events
+
+```yaml
+common_fields:
+  customer_id: {type: "int", range: [100000, 999999]}
+  session_id: {type: "uuid"}
+
+event_types:
+  - event_type_id: "product_view"
+    weight: 0.6
     fields:
-      email:
-        type: "string"
-        values: ["user1@test.com", "user2@test.com"]
-      source:
-        type: "string"
-        values: ["web", "mobile", "api"]
-        weights: [0.5, 0.3, 0.2]
+      product_id: {type: "int", range: [1, 10000]}
+      category: {type: "string", values: ["electronics", "clothing", "books"]}
   
-  - event_type_id: "user.login"
-    weight: 0.90  # 90% of events
-    avg_payload_kb: 1
+  - event_type_id: "add_to_cart"
+    weight: 0.25
     fields:
-      session_id:
-        type: "uuid"
-      ip_address:
-        type: "string"
-        values: ["192.168.1.1", "10.0.0.1"]
-
-test_execution:
-  base_throughput_per_sec: 500  # 500 events/sec
+      product_id: {type: "int", range: [1, 10000]}
+      quantity: {type: "int", range: [1, 5]}
+  
+  - event_type_id: "purchase"
+    weight: 0.15
+    fields:
+      order_id: {type: "uuid"}
+      total_amount: {type: "float", range: [10.0, 1000.0]}
 ```
 
-Then use it:
-
-```python
-config = dblstreamgen.load_config('my_config_generation.yaml', 'config_source_kinesis.yaml')
-generator = dblstreamgen.StreamGenerator(config)
-```
-
-## Customization
-
-### Adjust Throughput
-
-Edit `config_generation.yaml`:
+### IoT Sensor Data
 
 ```yaml
-test_execution:
-  base_throughput_per_sec: 1000  # Increase to 1000 events/sec
-```
+common_fields:
+  device_id: {type: "int", range: [1, 1000]}
+  timestamp: {type: "timestamp"}
 
-### Add Event Types
-
-Add more event types to `event_types` list:
-
-```yaml
 event_types:
-  - event_type_id: "player.achievement.unlock"
-    weight: 0.02  # 2% of events
-    avg_payload_kb: 4
+  - event_type_id: "temperature_reading"
+    weight: 0.4
     fields:
-      achievement_id:
-        type: "int"
-        range: [1, 100]
-      timestamp:
-        type: "timestamp"
+      temperature_celsius: {type: "float", range: [-20.0, 50.0]}
+      humidity: {type: "float", range: [0.0, 100.0]}
+  
+  - event_type_id: "motion_detected"
+    weight: 0.3
+    fields:
+      confidence: {type: "float", range: [0.5, 1.0]}
+  
+  - event_type_id: "battery_status"
+    weight: 0.3
+    fields:
+      battery_percent: {type: "int", range: [0, 100]}
 ```
 
-### Field Types Supported
+### Gaming Events
 
-- `uuid`: Random UUID string
-- `string`: Pick from values list (with optional weights)
-- `int`: Random integer in range
-- `float`: Random float in range
-- `timestamp`: ISO timestamp string
+```yaml
+common_fields:
+  player_id: {type: "int", range: [1, 100000]}
+  session_id: {type: "uuid"}
+
+event_types:
+  - event_type_id: "game_start"
+    weight: 0.1
+    fields:
+      game_mode: {type: "string", values: ["solo", "duo", "squad"]}
+  
+  - event_type_id: "player_action"
+    weight: 0.7
+    fields:
+      action_type: {type: "string", values: ["move", "shoot", "jump", "crouch"]}
+      x_coordinate: {type: "float", range: [0.0, 1000.0]}
+      y_coordinate: {type: "float", range: [0.0, 1000.0]}
+  
+  - event_type_id: "game_end"
+    weight: 0.2
+    fields:
+      final_score: {type: "int", range: [0, 10000]}
+      won: {type: "string", values: ["true", "false"]}
+```
+
+---
 
 ## Troubleshooting
 
-### Import Error: No module named 'dblstreamgen'
+### ModuleNotFoundError: No module named 'dblstreamgen'
 
-```bash
-# Make sure you installed the package
-pip install -e .
+```python
+# Make sure the wheel is installed
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
 
-# Or add to PYTHONPATH
-export PYTHONPATH="/path/to/dblstreamgen/src:$PYTHONPATH"
+# Restart Python
+dbutils.library.restartPython()
 ```
 
-### Import Error: No module named 'boto3'
+### ModuleNotFoundError: No module named 'pyspark'
+
+**This is expected locally** - v0.1.0 requires a Spark environment (Databricks). Use Databricks Runtime 15.4 LTS or above.
+
+### ConfigurationError: Total weights must sum to 1.0
+
+Check that your event type weights sum to exactly 1.0:
+
+```yaml
+# ❌ Wrong
+event_types:
+  - event_type_id: "a"
+    weight: 0.5
+  - event_type_id: "b"
+    weight: 0.6
+# Total: 1.1 (error!)
+
+# ✅ Correct
+event_types:
+  - event_type_id: "a"
+    weight: 0.5
+  - event_type_id: "b"
+    weight: 0.5
+# Total: 1.0
+```
+
+### Kinesis: Stream Not Found
+
+Create the stream first:
 
 ```bash
-pip install boto3
+aws kinesis create-stream \
+  --stream-name my-test-stream \
+  --shard-count 2
+```
+
+Or let the library calculate shard count:
+
+```yaml
+sink_config:
+  auto_shard_calculation: true
+  # Library will calculate based on throughput
 ```
 
 ### AWS Credentials Error
 
-```bash
-# Set environment variables
-export AWS_ACCESS_KEY_ID="your-key"
-export AWS_SECRET_ACCESS_KEY="your-secret"
+Use Databricks secrets (recommended):
 
-# Or use AWS CLI to configure
-aws configure
+```python
+# Store secrets
+dbutils.secrets.put(scope="my-scope", key="aws-key", string_value="your-key")
+dbutils.secrets.put(scope="my-scope", key="aws-secret", string_value="your-secret")
+
+# Use in config or code
+aws_key = dbutils.secrets.get("my-scope", "aws-key")
 ```
 
-### Kinesis Stream Not Found
+Or use IAM role (if Databricks cluster has Kinesis permissions):
 
-Make sure the stream exists:
-
-```bash
-aws kinesis describe-stream --stream-name your-stream-name
+```yaml
+sink_config:
+  # Remove aws_access_key_id and aws_secret_access_key
+  # Library will use instance profile
 ```
 
-Or create it:
+---
 
-```bash
-aws kinesis create-stream \
-  --stream-name test-game-events-stream \
-  --shard-count 1
+## Advanced Usage
+
+### Batch Mode
+
+Generate a fixed number of events:
+
+```yaml
+generation_mode: "batch"
+
+batch_config:
+  total_rows: 1000000
+  partitions: 16
 ```
+
+```python
+# Build batch DataFrame
+spec = builder.build_spec_for_event_type(event_type_config)
+df = spec.build()
+
+# Write to Delta
+df.write.format("delta").mode("append").save("/path/to/table")
+```
+
+### Multiple Event Types (10K+)
+
+The union strategy scales to thousands of event types:
+
+```yaml
+event_types:
+  - event_type_id: "event_0001"
+    weight: 0.0001
+    fields: {...}
+  - event_type_id: "event_0002"
+    weight: 0.0001
+    fields: {...}
+  # ... up to 10,000+ event types
+```
+
+### Custom Partition Keys
+
+```yaml
+sink_config:
+  partition_key_field: "custom_field"  # Use any field from your config
+```
+
+---
 
 ## Next Steps
 
-- **Add more event types**: Edit `config_generation.yaml`
-- **Increase throughput**: Adjust `base_throughput_per_sec`
-- **Run longer tests**: Modify `duration_seconds` in the example script
-- **Add BatchGenerator**: See `docs/agent_context/EXTENSION_GUIDE.md`
-- **Add Kafka support**: See `docs/agent_context/EXTENSION_GUIDE.md`
-- **Add rate variance**: See `docs/agent_context/EXTENSION_GUIDE.md`
+- 📖 **Full Documentation**: See `README.md`
+- 🏗️ **Architecture Details**: See `docs/agent_context/TECHNICAL_SPECIFICATION.md`
+- 📝 **Example Config**: See `sample/configs/config_v0.1.0.yaml`
+- 📓 **Example Notebook**: See `sample/notebooks/01_simple_example_v0.1.0.py`
+- 🎯 **Roadmap**: See `docs/agent_context/PROJECT_STATUS.md`
+
+### Upcoming Features (v0.2.0+)
+
+- ✅ **Unit tests** - Comprehensive test coverage
+- ✅ **Delta sink** - Write to Delta tables
+- ✅ **Kafka sink** - Stream to Apache Kafka
+- ✅ **Event Hubs sink** - Stream to Azure Event Hubs
+- ✅ **Advanced distributions** - Normal, Zipfian, Exponential
+- ✅ **Template fields** - Email, phone, URL patterns
+- ✅ **Dependent fields** - Country → City → Zip
+- ✅ **Rate variance** - Sinusoidal, bursts, random walk
+
+---
 
 ## Need Help?
 
-- Check `README.md` for full documentation
-- See `docs/agent_context/TECHNICAL_SPECIFICATION.md` for architecture details
-- See `examples/simple_test.py` for a complete working example
+- 📖 **README**: Main documentation
+- 📋 **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
+- 🚀 **Release Notes**: `V0.1.0_RELEASE.md`
+- 📊 **Project Status**: `docs/agent_context/PROJECT_STATUS.md`
+- 🐛 **Issues**: `docs/agent_context/github_issues/`
 
-Happy testing! 🚀
+---
 
+**Happy streaming!** 🚀
+
+*dblstreamgen v0.1.0 - Synthetic streaming data generation for Databricks*
