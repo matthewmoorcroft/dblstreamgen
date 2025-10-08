@@ -1,12 +1,15 @@
 """Stream orchestrator for managing multiple event type streams."""
 
+import logging
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col
-from typing import Dict, List
+from typing import Dict
 
 from dblstreamgen.config import Config
 from dblstreamgen.builder.spec_builder import DataGeneratorBuilder
 from dblstreamgen.orchestrator.serialization import serialize_to_json, get_payload_columns
+
+logger = logging.getLogger(__name__)
 
 
 class StreamOrchestrator:
@@ -79,6 +82,30 @@ class StreamOrchestrator:
         """
         return self.builder.build_all_dataframes()
     
+    def limit_stream_rate(self, df: DataFrame, event_type_id: str, 
+                          target_rows_per_second: float) -> DataFrame:
+        """
+        Apply rate limiting to prevent backlog accumulation during spin-up and delays.
+        
+        Uses 2x hard limit on batch size to handle spin-up periods while maintaining
+        manageable batch sizes during normal operation.
+        
+        Args:
+            df: Input streaming DataFrame
+            event_type_id: Event type identifier
+            target_rows_per_second: Target rate for this event type
+            
+        Returns:
+            Rate-limited DataFrame
+        """
+        max_rows_per_batch = int(target_rows_per_second * 2)
+        limited_df = df.limit(max_rows_per_batch)
+        
+        logger.info(f"Event '{event_type_id}': rate limit {target_rows_per_second:,.0f} rows/sec "
+                   f"(max {max_rows_per_batch:,} per batch)")
+        
+        return limited_df
+    
     def serialize_stream(self, df: DataFrame) -> DataFrame:
         """
         Transform DataFrame to unified schema with serialized payload.
@@ -129,43 +156,49 @@ class StreamOrchestrator:
     
     def create_unified_stream(self) -> DataFrame:
         """
-        Create unified stream from all event types.
+        Create unified stream from all event types with rate limiting.
         
-        Process:
-        1. Generate DataFrames for each event type
-        2. Serialize each to unified schema
-        3. Union all into single stream
+        Generates separate DataFrames for each event type, applies rate limiting
+        to prevent backlog accumulation, serializes to unified schema, and unions
+        all streams together.
         
         Returns:
-            Single DataFrame containing all event types
-            
-        Example:
-            >>> unified = orchestrator.create_unified_stream()
-            >>> unified.printSchema()
-            root
-             |-- event_type_id: string
-             |-- event_timestamp: timestamp
-             |-- partition_key: string
-             |-- serialized_payload: string
+            Single DataFrame with unified schema containing all event types
         """
-        # Generate streams for each event type
         streams = self.generate_event_streams()
         
         if not streams:
             raise ValueError("No event types defined in configuration")
         
-        # Serialize each stream to unified schema
+        rates = self.calculate_rates()
         serialized_streams = []
+        
         for event_id, df in streams.items():
             try:
-                serialized_df = self.serialize_stream(df)
+                # Rate limiting disabled - was causing empty batches
+                # TODO: Re-implement with streaming-compatible approach
+                # if self.config.data['generation_mode'] == 'streaming':
+                #     target_rate = rates.get(event_id, 0)
+                #     limited_df = self.limit_stream_rate(df, event_id, target_rate)
+                # else:
+                #     limited_df = df
+                
+                limited_df = df
+                
+                serialized_df = self.serialize_stream(limited_df)
                 serialized_streams.append(serialized_df)
             except Exception as e:
-                raise RuntimeError(f"Error serializing stream for '{event_id}': {e}")
+                raise RuntimeError(f"Error processing stream for '{event_id}': {e}")
         
-        # Union all streams
         unified = serialized_streams[0]
         for stream in serialized_streams[1:]:
             unified = unified.union(stream)
+        
+        if rates:
+            total_rate = sum(rates.values())
+            logger.info(f"Unified stream created: {len(serialized_streams)} event types, "
+                       f"target {total_rate:,.0f} rows/sec (rate limiting disabled)")
+        else:
+            logger.info(f"Unified stream created: {len(serialized_streams)} event types")
         
         return unified

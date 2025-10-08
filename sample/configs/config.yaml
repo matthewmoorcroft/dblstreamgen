@@ -3,8 +3,54 @@
 # This configuration demonstrates generating synthetic streaming data
 # for a generic web application use case.
 
+# ============================================================================
+# MAIN CONFIGURATION
+# ============================================================================
+
+# Generation mode: "streaming" or "batch"
+generation_mode: "streaming"
+
+# Streaming configuration
+streaming_config:
+  total_rows_per_second: 1000  # Total throughput across all event types
+  # Results in:
+  # - user.page_view: 600 events/sec
+  # - user.click: 300 events/sec
+  # - user.purchase: 100 events/sec
+
+# Serialization format for payloads
+serialization_format: "json"  # Options: "json", "avro", "binary", "protobuf"
+
+# Sink configuration
+sink_config:
+  type: "kinesis"  # Options: "kinesis", "kafka", "eventhubs", "delta"
+  
+  # Kinesis-specific settings
+  stream_name: "web-events-stream"
+  region: "us-east-1"
+  
+  # Which field to use for Kinesis partitioning
+  partition_key_field: "user_id"
+  
+  # AUTHENTICATION (choose ONE):
+  # Option 1: Unity Catalog service credential (single-user clusters, auto-refresh)
+  service_credential_name: "my-kinesis-credential"
+  
+  # Option 2: Direct credentials from Databricks secrets (legacy)
+  # aws_access_key_id: "{{secrets/my-scope/aws-access-key}}"
+  # aws_secret_access_key: "{{secrets/my-scope/aws-secret-key}}"
+  
+  # Option 3: Cluster instance profile (omit credentials - automatic)
+
+# ============================================================================
+# SCHEMA CONFIGURATION
+# ============================================================================
+
 # Common fields that appear in ALL event types
 common_fields:
+  event_timestamp:
+    type: "timestamp"  # When the event occurred
+  
   user_id:
     type: "int"
     range: [1, 1000000]  # 1 million unique users
@@ -53,45 +99,9 @@ event_types:
         type: "int"
         range: [1, 10]
 
-# Generation mode: "streaming" or "batch"
-generation_mode: "streaming"
-
-# Streaming configuration
-streaming_config:
-  total_rows_per_second: 1000  # Total throughput across all event types
-  # Results in:
-  # - user.page_view: 600 events/sec
-  # - user.click: 300 events/sec
-  # - user.purchase: 100 events/sec
-
-# Batch configuration (used when generation_mode: "batch")
-# batch_config:
-#   total_rows: 1000000
-#   partitions: 8
-
-# Serialization format for payloads
-serialization_format: "json"  # Options: "json", "avro", "binary", "protobuf"
-
-# Sink configuration
-sink_config:
-  type: "kinesis"  # Options: "kinesis", "kafka", "eventhubs", "delta"
-  
-  # Kinesis-specific settings
-  stream_name: "web-events-stream"
-  region: "us-east-1"
-  
-  # Which field to use for Kinesis partitioning
-  partition_key_field: "user_id"
-  
-  # Auto-calculate shard count based on throughput
-  auto_shard_calculation: true
-  # Or manually specify: shard_count: 2
-  
-  # AWS credentials (use Databricks secrets in production)
-  aws_access_key_id: "{{secrets/my-scope/aws-access-key}}"
-  aws_secret_access_key: "{{secrets/my-scope/aws-secret-key}}"
-
-# Notes:
+# ============================================================================
+# NOTES
+# ============================================================================
 # - Weights MUST sum to 1.0 (validated at config load)
 # - total_rows_per_second is distributed by weights
 # - All fields in common_fields appear in every event type

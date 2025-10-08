@@ -1,5 +1,6 @@
 """DataGenerator spec builder for dbldatagen."""
 
+import logging
 import dbldatagen as dg
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StringType, TimestampType
@@ -7,6 +8,8 @@ from typing import Dict, Any
 
 from dblstreamgen.config import Config
 from dblstreamgen.builder.field_mappers import FieldMapper
+
+logger = logging.getLogger(__name__)
 
 
 class DataGeneratorBuilder:
@@ -33,6 +36,36 @@ class DataGeneratorBuilder:
         self.config = config
         self.field_mapper = FieldMapper()
     
+    def _calculate_partitions_from_rate(self, total_rows_per_second: int) -> int:
+        """
+        Calculate partitions targeting ~800 events/sec per partition (min 4, multiple of 4).
+        
+        Args:
+            total_rows_per_second: Total throughput
+            
+        Returns:
+            int: Partition count
+        """
+        rate_based = total_rows_per_second // 800
+        bounded = max(4, rate_based)
+        partitions = self._round_to_multiple_of_4(bounded)
+        
+        logger.debug(f"Calculated {partitions} partitions for {total_rows_per_second:,} events/sec")
+        
+        return partitions
+    
+    def _round_to_multiple_of_4(self, value: int) -> int:
+        """
+        Round value to nearest multiple of 4.
+        
+        Args:
+            value: Input value
+            
+        Returns:
+            int: Value rounded to multiple of 4
+        """
+        return max(4, (value + 2) // 4 * 4)  # Round to nearest, minimum 4
+    
     def build_spec_for_event_type(self, 
                                     event_type: Dict[str, Any],
                                     rows_per_second: float) -> dg.DataGenerator:
@@ -58,9 +91,22 @@ class DataGeneratorBuilder:
         generation_mode = self.config.data['generation_mode']
         
         if generation_mode == 'streaming':
-            # For streaming, rows parameter is ignored
-            rows = None
-            partitions = 4  # Default for streaming
+            # For streaming, rows = rows per micro-batch
+            # This is a reasonable default; actual rate controlled by rowsPerSecond
+            rows = 1000
+            
+            # Calculate partitions - prioritize event-specific, then global, then auto
+            streaming_config = self.config.data.get('streaming_config', {})
+            
+            if 'partitions' in event_type:
+                partitions = self._round_to_multiple_of_4(event_type['partitions'])
+                logger.info(f"Event '{event_type_id}': using event-specific {partitions} partitions")
+            elif 'partitions' in streaming_config:
+                partitions = self._round_to_multiple_of_4(streaming_config['partitions'])
+                logger.info(f"Event '{event_type_id}': using global {partitions} partitions")
+            else:
+                partitions = self._calculate_partitions_from_rate(int(rows_per_second))
+                logger.info(f"Event '{event_type_id}': auto-calculated {partitions} partitions for {rows_per_second:,.0f} events/sec")
         else:  # batch
             # Calculate rows for this event type based on weight
             total_rows = self.config.data['batch_config']['total_rows']
@@ -125,13 +171,12 @@ class DataGeneratorBuilder:
         generation_mode = self.config.data['generation_mode']
         
         if generation_mode == 'streaming':
-            # Build streaming DataFrame
+            logger.info(f"Event '{event_type['event_type_id']}': streaming at {rows_per_second:,.0f} events/sec")
             return spec.build(
                 withStreaming=True,
                 options={'rowsPerSecond': int(rows_per_second)}
             )
         else:
-            # Build batch DataFrame
             return spec.build()
     
     def build_all_dataframes(self) -> Dict[str, DataFrame]:
