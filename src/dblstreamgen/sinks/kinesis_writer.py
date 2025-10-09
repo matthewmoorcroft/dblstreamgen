@@ -4,7 +4,6 @@ import logging
 import boto3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.datasource import DataSource, DataSourceStreamWriter, WriterCommitMessage
-from pyspark import TaskContext
 from typing import Tuple
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ class KinesisStreamWriter(DataSourceStreamWriter):
                 - partition_key_field (default: partition_key): Field for partitioning
                 
                 Authentication (choose one, or omit for instance profile):
-                - service_credential_name: Unity Catalog service credential (single-user clusters only)
+                - service_credential: Unity Catalog service credential (single-user clusters only)
                 - aws_access_key_id + aws_secret_access_key: Direct IAM credentials
                 - (none): Use cluster instance profile
         """
@@ -56,7 +55,7 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             raise ValueError("stream_name is required for Kinesis writer")
         
         # Authentication options
-        self.service_credential_name = options.get("service_credential_name")
+        self.service_credential = options.get("service_credential")
         self.aws_access_key = options.get("aws_access_key_id")
         self.aws_secret_key = options.get("aws_secret_access_key")
         self.aws_session_token = options.get("aws_session_token")
@@ -68,15 +67,21 @@ class KinesisStreamWriter(DataSourceStreamWriter):
                     "Both 'aws_access_key_id' and 'aws_secret_access_key' are required"
                 )
             logger.info(f"Using direct AWS credentials")
-        elif self.service_credential_name:
-            logger.info(f"Using Unity Catalog service credential: {self.service_credential_name}")
+        elif self.service_credential:
+            logger.info(f"Using Unity Catalog service credential: {self.service_credential}")
         else:
             logger.info("Using cluster instance profile")
     
     
     def write(self, iterator):
         """
-        Write partition data to Kinesis in 500-record chunks with 50 parallel threads.
+        Write partition data to Kinesis in 500-record chunks with parallel streaming.
+        
+        Optimized for throughput:
+        - True streaming: submits chunks as they're ready (no materialization)
+        - Pre-converts rows to Kinesis format
+        - Fixed 50-thread pool for optimal throughput
+        - Parallel processing overlaps with network I/O
         
         Args:
             iterator: Iterator of Row objects from partition
@@ -84,32 +89,70 @@ class KinesisStreamWriter(DataSourceStreamWriter):
         Returns:
             KinesisCommitMessage with sent/failed counts
         """
-        # Import here to ensure serializability
-        import boto3
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        # Initialize boto3 client with appropriate credentials
-        client = self._create_kinesis_client()
+        try:
+            # Initialize boto3 client once per partition
+            print(f"🔧 Initializing Kinesis client for partition...")
+            client = self._create_kinesis_client()
+            print(f"✅ Kinesis client initialized successfully")
+        except Exception as e:
+            print(f"❌ FAILED to create Kinesis client: {e}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            raise
         
-        # Collect all records from iterator
-        records = list(iterator)
-        partition_id = TaskContext.get().partitionId()
-        
-        if not records:
-            return KinesisCommitMessage(partition_id, 0, 0)
-        
-        # Split into chunks of 500 (Kinesis PutRecords API limit)
-        chunks = [records[i:i+500] for i in range(0, len(records), 500)]
-        
-        # Send chunks in parallel (50 threads for maximum throughput)
-        total_sent = 0
-        total_failed = 0
-        
+        # Fixed 50-thread pool for optimal throughput
+        # 50 threads × 8 partitions = 400 threads per executor (safe for most executors)
         with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [
-                executor.submit(self._send_chunk, client, chunk)
-                for chunk in chunks
-            ]
+            futures = []
+            current_chunk = []
+            
+            # Stream rows and submit chunks immediately when ready
+            row_count = 0
+            for row in iterator:
+                row_count += 1
+                # Fast path: direct attribute access
+                try:
+                    payload = row.serialized_payload
+                    partition_key = row.partition_key
+                except AttributeError:
+                    # Fallback to dict access
+                    row_dict = row.asDict()
+                    payload = row_dict.get('serialized_payload', '')
+                    partition_key = row_dict.get('partition_key', row_dict.get('event_type_id', '0'))
+                
+                # Validate data before encoding
+                if payload is None or partition_key is None:
+                    logger.error(f"Invalid row data: payload={payload}, partition_key={partition_key}")
+                    print(f"❌ Invalid row {row_count}: payload={payload}, partition_key={partition_key}")
+                    continue
+                
+                # Pre-convert to Kinesis format
+                current_chunk.append({
+                    'Data': payload.encode('utf-8') if isinstance(payload, str) else payload,
+                    'PartitionKey': str(partition_key)
+                })
+                
+                # Submit chunk immediately when full (start sending while still processing)
+                if len(current_chunk) >= 500:
+                    # Pass reference directly (safe - we reset current_chunk immediately after)
+                    futures.append(executor.submit(self._send_prepared_chunk, client, current_chunk))
+                    current_chunk = []
+            
+            print(f"📥 Processed {row_count} rows, submitting {len(futures)} chunks ({len(current_chunk)} remaining)")
+            
+            # Submit remaining records
+            if current_chunk:
+                futures.append(executor.submit(self._send_prepared_chunk, client, current_chunk))
+            
+            # No data to send
+            if not futures:
+                return KinesisCommitMessage(0, 0)
+            
+            # Collect results as they complete
+            total_sent = 0
+            total_failed = 0
             
             for future in as_completed(futures):
                 try:
@@ -118,35 +161,24 @@ class KinesisStreamWriter(DataSourceStreamWriter):
                     total_failed += failed
                 except Exception as e:
                     logger.error(f"Error sending chunk: {e}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    # Can't determine exact chunk size here, will be counted in failed records
-                    pass
+                    if logger.isEnabledFor(logging.DEBUG):
+                        import traceback
+                        logger.debug(f"Traceback: {traceback.format_exc()}")
         
-        return KinesisCommitMessage(partition_id, total_sent, total_failed)
+        print(f"📊 Partition complete: {total_sent} sent, {total_failed} failed")
+        return KinesisCommitMessage(total_sent, total_failed)
     
-    def _send_chunk(self, client, records) -> Tuple[int, int]:
+    def _send_prepared_chunk(self, client, kinesis_records) -> Tuple[int, int]:
         """
-        Send one chunk (≤500 records) to Kinesis.
+        Send pre-formatted Kinesis records (optimized - no conversion needed).
         
         Args:
             client: boto3 Kinesis client
-            records: List of Row objects (≤500)
+            kinesis_records: List of dicts with 'Data' and 'PartitionKey' keys (≤500)
             
         Returns:
             Tuple of (sent_count, failed_count)
         """
-        kinesis_records = []
-        
-        for row in records:
-            # Convert Row to dict for easier access
-            row_dict = row.asDict() if hasattr(row, 'asDict') else row
-            
-            kinesis_records.append({
-                'Data': str(row_dict.get('serialized_payload', '')).encode('utf-8'),
-                'PartitionKey': str(row_dict.get('partition_key', row_dict.get('event_type_id', '0')))
-            })
-        
         try:
             response = client.put_records(
                 StreamName=self.stream_name,
@@ -154,30 +186,32 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             )
             
             failed = response.get('FailedRecordCount', 0)
-            sent = len(records) - failed
+            sent = len(kinesis_records) - failed
             
-            # Log specific errors for failed records
+            # Only log errors if we have failures
             if failed > 0 and 'Records' in response:
                 error_codes = {}
-                for i, record_response in enumerate(response['Records']):
+                for record_response in response['Records']:
                     if 'ErrorCode' in record_response:
                         error_code = record_response['ErrorCode']
-                        error_msg = record_response.get('ErrorMessage', 'No message')
                         error_codes[error_code] = error_codes.get(error_code, 0) + 1
-                        
-                        # Log first occurrence of each error type
-                        if error_codes[error_code] == 1:
-                            logger.error(f"Kinesis error: {error_code} - {error_msg}")
                 
-                logger.error(f"Failed {failed}/{len(records)} records. Error summary: {error_codes}")
+                # Log summary only (avoid per-record logging for performance)
+                if error_codes:
+                    logger.error(f"Kinesis errors in chunk: {error_codes}")
             
             return (sent, failed)
         
         except Exception as e:
-            logger.error(f"Failed to send chunk to Kinesis: {e}")
             import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return (0, len(records))
+            full_trace = traceback.format_exc()
+            print(f"❌ EXCEPTION in put_records: {type(e).__name__}: {e}")
+            print(f"   Stream: {self.stream_name}, Region: {self.region}, Chunk size: {len(kinesis_records)}")
+            logger.error(f"EXCEPTION in put_records: {type(e).__name__}: {e}")
+            logger.error(f"Stream: {self.stream_name}, Region: {self.region}")
+            logger.error(f"Chunk size: {len(kinesis_records)}")
+            logger.error(f"Full traceback:\n{full_trace}")
+            return (0, len(kinesis_records))
     
     def commit(self, messages, batchId):
         """
@@ -187,12 +221,14 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             messages: List of KinesisCommitMessage from all partitions
             batchId: Batch ID
         """
-        total_sent = sum(m.records_sent for m in messages)
-        total_failed = sum(m.records_failed for m in messages)
+        total_sent = sum(m.sent_count for m in messages)
+        total_failed = sum(m.failed_count for m in messages)
         
         if total_failed > 0:
+            print(f"⚠️  Batch {batchId}: {total_sent:,} sent, {total_failed:,} failed")
             logger.warning(f"Batch {batchId}: {total_sent:,} sent, {total_failed:,} failed")
         else:
+            print(f"✅ Batch {batchId}: {total_sent:,} records sent to Kinesis")
             logger.info(f"Batch {batchId}: {total_sent:,} records sent to Kinesis")
     
     def abort(self, messages, batchId):
@@ -203,11 +239,12 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             messages: List of commit messages from successful partitions
             batchId: Batch ID
         """
+        print(f"❌ Batch {batchId} aborted - check executor logs for errors")
         logger.error(f"Batch {batchId} aborted")
     
     def _create_kinesis_client(self):
         """
-        Create boto3 Kinesis client with automatic credential refresh.
+        Create boto3 Kinesis client with automatic credential refresh and optimized connection pooling.
         
         Runs on executor nodes. Supports three authentication methods:
         1. Unity Catalog service credential (auto-refresh, single-user clusters only)
@@ -218,29 +255,38 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             boto3 Kinesis client
         """
         import boto3
+        from botocore.config import Config
+        
+        # Optimize client for parallel requests
+        client_config = Config(
+            max_pool_connections=50,  # Match thread pool size exactly
+            tcp_keepalive=True  # Keep connections alive for reuse
+        )
         
         # Option 1: Unity Catalog service credential with auto-refresh
-        if self.service_credential_name:
+        if self.service_credential:
             try:
                 from databricks.service_credentials import getServiceCredentialsProvider
                 
                 # Get credential provider (works in executor/UDF context on single-user clusters)
-                credential_provider = getServiceCredentialsProvider(self.service_credential_name)
+                credential_provider = getServiceCredentialsProvider(self.service_credential)
                 
                 # Create boto3 session with the provider for automatic token refresh
                 session = boto3.Session(botocore_session=credential_provider)
-                client = session.client('kinesis', region_name=self.region)
+                client = session.client('kinesis', region_name=self.region, config=client_config)
                 
-                # Verify connection
-                client.describe_stream(StreamName=self.stream_name, Limit=1)
                 logger.info(f"Connected to Kinesis with service credential (auto-refresh enabled)")
                 return client
                     
             except Exception as e:
-                logger.error(f"Failed to use service credential '{self.service_credential_name}': {e}")
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(f"Failed to use service credential '{self.service_credential}': {e}")
+                logger.error(f"Full traceback: {error_details}")
                 raise RuntimeError(
-                    f"Service credential '{self.service_credential_name}' failed. "
-                    f"Ensure: 1) Single-user cluster, 2) Credential exists, 3) You have USE privilege."
+                    f"Service credential '{self.service_credential}' failed: {str(e)}\n\n"
+                    f"Ensure: 1) Single-user cluster, 2) Credential exists, 3) You have USE privilege.\n\n"
+                    f"Full error: {error_details}"
                 )
         
         # Option 2: Direct IAM credentials
@@ -248,20 +294,19 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             client_kwargs = {
                 'region_name': self.region,
                 'aws_access_key_id': self.aws_access_key,
-                'aws_secret_access_key': self.aws_secret_key
+                'aws_secret_access_key': self.aws_secret_key,
+                'config': client_config
             }
             if self.aws_session_token:
                 client_kwargs['aws_session_token'] = self.aws_session_token
             
             client = boto3.client('kinesis', **client_kwargs)
-            client.describe_stream(StreamName=self.stream_name, Limit=1)
             logger.info(f"Connected to Kinesis with direct credentials")
             return client
         
         # Option 3: Cluster instance profile
         else:
-            client = boto3.client('kinesis', region_name=self.region)
-            client.describe_stream(StreamName=self.stream_name, Limit=1)
+            client = boto3.client('kinesis', region_name=self.region, config=client_config)
             logger.info(f"Connected to Kinesis with instance profile")
             return client
 
@@ -273,20 +318,17 @@ class KinesisCommitMessage(WriterCommitMessage):
     Inherits from WriterCommitMessage for PySpark DataSource API compatibility.
     
     Attributes:
-        partition_id: Spark partition ID
-        records_sent: Number of records successfully sent
-        records_failed: Number of records that failed to send
+        sent_count: Number of records successfully sent
+        failed_count: Number of records that failed to send
     """
     
-    def __init__(self, partition_id: int, records_sent: int, records_failed: int):
+    def __init__(self, sent_count: int, failed_count: int):
         """
         Initialize commit message.
         
         Args:
-            partition_id: Spark partition ID
-            records_sent: Number of records successfully sent
-            records_failed: Number of records that failed to send
+            sent_count: Number of records successfully sent
+            failed_count: Number of records that failed to send
         """
-        self.partition_id = partition_id
-        self.records_sent = records_sent
-        self.records_failed = records_failed
+        self.sent_count = sent_count
+        self.failed_count = failed_count

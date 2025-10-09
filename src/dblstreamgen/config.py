@@ -77,6 +77,9 @@ class Config:
         
         # Validate supported field types
         self._validate_field_types()
+        
+        # Validate field type consistency across event types
+        self._validate_field_type_consistency()
     
     def _validate_field_types(self):
         """Validate all field types are supported."""
@@ -101,6 +104,46 @@ class Config:
                         f"{event_type['event_type_id']}.fields.{field_name}. "
                         f"Supported types: {supported_types}"
                     )
+    
+    def _validate_field_type_consistency(self):
+        """
+        Validate that fields with the same name have consistent types across all event types.
+        
+        This is required for the wide schema approach where fields are shared across event types.
+        """
+        # Build field type registry: field_name -> (type, event_type_id)
+        field_registry = {}
+        
+        # Check common fields first (these set the baseline)
+        for field_name, field_spec in self.data.get('common_fields', {}).items():
+            field_type = field_spec.get('type')
+            field_registry[field_name] = (field_type, 'common_fields')
+        
+        # Check event-specific fields
+        for event_type in self.data['event_types']:
+            event_id = event_type['event_type_id']
+            
+            for field_name, field_spec in event_type.get('fields', {}).items():
+                field_type = field_spec.get('type')
+                
+                if field_name in field_registry:
+                    # Check consistency
+                    existing_type, existing_location = field_registry[field_name]
+                    
+                    if existing_type != field_type:
+                        raise ConfigurationError(
+                            f"Field '{field_name}' has inconsistent types:\n"
+                            f"  {existing_location}: {existing_type}\n"
+                            f"  {event_id}: {field_type}\n\n"
+                            f"Fields with the same name must have the same type across all event types.\n"
+                            f"If these represent different data, use different field names.\n\n"
+                            f"Suggestions:\n"
+                            f"  - Use '{field_name}_{existing_type}' and '{field_name}_{field_type}'\n"
+                            f"  - Use more specific names like 'click_{field_name}' and 'purchase_{field_name}'\n"
+                            f"  - Standardize on one type if the data is semantically the same"
+                        )
+                else:
+                    field_registry[field_name] = (field_type, event_id)
     
     def get(self, key: str, default: Any = None) -> Any:
         """

@@ -92,32 +92,7 @@ unified_stream.printSchema()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 6: Preview Stream (Console Output)
-# MAGIC
-# MAGIC Let's preview the stream output to console first to verify it's working.
-
-# COMMAND ----------
-
-# Write to console for preview (will run for 30 seconds)
-preview_query = unified_stream.writeStream \
-    .format("console") \
-    .outputMode("append") \
-    .option("numRows", 10) \
-    .option("truncate", False) \
-    .start()
-
-# Let it run for 30 seconds
-import time
-time.sleep(30)
-
-# Stop preview
-preview_query.stop()
-print("✅ Preview complete")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Step 7: Register Kinesis Data Source
+# MAGIC ## Step 6: Register Kinesis Data Source
 
 # COMMAND ----------
 
@@ -129,7 +104,7 @@ print("✅ Kinesis data source registered as 'dblstreamgen_kinesis'")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 8: Write to Kinesis
+# MAGIC ## Step 7: Write to Kinesis
 # MAGIC
 # MAGIC Write the unified stream to AWS Kinesis. Choose the authentication method that fits your setup:
 # MAGIC
@@ -202,28 +177,102 @@ print(f"✅ Streaming started! Query ID: {kinesis_query.id}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 9: Monitor Stream Status
+# MAGIC ## Step 8: Read from Kinesis and Analyze Distribution
+# MAGIC
+# MAGIC Read back the data from Kinesis to validate the distribution matches our configuration.
 
 # COMMAND ----------
 
-# Check query status
-print(f"Query ID: {kinesis_query.id}")
-print(f"Status: {kinesis_query.status}")
-print(f"Recent Progress:")
-print(kinesis_query.lastProgress)
+# Read from Kinesis
+kinesis_df = (spark.readStream
+    .format("kinesis")
+    .option("streamName", stream_name)
+    .option("region", region)
+    .option("initialPosition", "TRIM_HORIZON")
+    .load()
+)
+
+# Parse the data
+from pyspark.sql.functions import from_json, get_json_object, count, sum as spark_sum, col
+
+parsed_df = (kinesis_df
+    .selectExpr("CAST(data AS STRING) as json_data")
+    .withColumn("event_type_id", get_json_object(col("json_data"), "$.event_type_id"))
+    .withColumn("event_timestamp", get_json_object(col("json_data"), "$.event_timestamp"))
+    .withColumn("partition_key", get_json_object(col("json_data"), "$.partition_key"))
+    .withColumn("payload", get_json_object(col("json_data"), "$.serialized_payload"))
+)
+
+print("✅ Kinesis read stream configured")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 10: Stop Stream
+# MAGIC ## Step 9: Distribution Analysis
 # MAGIC
-# MAGIC When you're done testing, stop the stream.
+# MAGIC Analyze the event type distribution to verify it matches the configured weights.
 
 # COMMAND ----------
 
-# Stop the streaming query
+# Aggregate by event_type_id to get counts
+distribution_df = (parsed_df
+    .groupBy("event_type_id")
+    .agg(count("*").alias("count"))
+    .orderBy("event_type_id")
+)
+
+# Write to memory table for analysis
+distribution_query = (distribution_df.writeStream
+    .format("memory")
+    .queryName("event_distribution")
+    .outputMode("complete")
+    .start()
+)
+
+print("✅ Distribution analysis started")
+print("   Analyzing event distribution...")
+
+# COMMAND ----------
+
+# Let it run for 30 seconds to collect data
+import time
+time.sleep(30)
+
+# Query the distribution
+distribution_results = spark.sql("""
+    SELECT 
+        event_type_id,
+        count,
+        ROUND(count * 100.0 / SUM(count) OVER (), 2) as percentage
+    FROM event_distribution
+    ORDER BY count DESC
+    LIMIT 20
+""")
+
+print("✅ Event Distribution (Top 20):")
+distribution_results.show(20, False)
+
+# Get total counts
+total_counts = spark.sql("SELECT SUM(count) as total FROM event_distribution").collect()[0]['total']
+print(f"\n✅ Total events processed: {total_counts:,}")
+
+# Calculate expected vs actual distribution
+expected_weight = 1.0 / len(config.data['event_types'])
+print(f"✅ Expected percentage per event type: {expected_weight * 100:.4f}%")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 10: Stop Streams
+# MAGIC
+# MAGIC When done analyzing, stop all streams.
+
+# COMMAND ----------
+
+# Stop all queries
 kinesis_query.stop()
-print("✅ Stream stopped")
+distribution_query.stop()
+print("✅ All streams stopped")
 
 # COMMAND ----------
 
