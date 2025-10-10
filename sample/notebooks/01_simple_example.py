@@ -18,7 +18,7 @@
 # COMMAND ----------
 
 # Install from Unity Catalog volume
-%pip install /Volumes/catalog/schema/volume/dblstreamgen-0.1.0-py3-none-any.whl
+%pip install --force-reinstall /Volumes/users/matthew_moorcroft/files/dblstreamgen-0.1.0-py3-none-any.whl
 
 # COMMAND ----------
 
@@ -49,7 +49,7 @@ print(f"✅ dblstreamgen version: {dblstreamgen.__version__}")
 
 # Load configuration from Unity Catalog volume
 config = dblstreamgen.load_config(
-    "/Volumes/catalog/schema/volume/config.yaml"
+    "/Workspace/Users/matthew.moorcroft@databricks.com/sample/configs/stress_test_1500_events.yaml"
 )
 
 # Validate configuration loaded correctly
@@ -106,173 +106,133 @@ print("✅ Kinesis data source registered as 'dblstreamgen_kinesis'")
 # MAGIC %md
 # MAGIC ## Step 7: Write to Kinesis
 # MAGIC
-# MAGIC Write the unified stream to AWS Kinesis. Choose the authentication method that fits your setup:
-# MAGIC
-# MAGIC | Method | Best For | Auto-Refresh | Cluster Type |
-# MAGIC |--------|----------|--------------|--------------|
-# MAGIC | Service Credential | Unity Catalog + Single-user | ✅ Yes | Single-user only |
-# MAGIC | Instance Profile | Production, Non-Unity Catalog | ✅ Yes | Any |
-# MAGIC | Direct Credentials | Legacy/Testing | ❌ No | Any |
+# MAGIC Write the unified stream to AWS Kinesis.
 
 # COMMAND ----------
 
-# Get Kinesis configuration from config
+checkpoint_location = "/tmp/dblstreamgen/checkpoints/kinesis"
+dbutils.fs.rm(checkpoint_location, True)
+
 sink_config = config.data['sink_config']
 stream_name = sink_config['stream_name']
 region = sink_config['region']
 partition_key_field = sink_config.get('partition_key_field', 'partition_key')
-
-print(f"Writing to Kinesis stream: {stream_name} in {region}")
-
-# Determine authentication method from config
 service_credential_name = sink_config.get('service_credential_name')
-use_direct_credentials = sink_config.get('aws_access_key_id')
 
-if service_credential_name:
-    # Option 1: Unity Catalog service credential (single-user clusters only)
-    print(f"✅ Using service credential: {service_credential_name} (auto-refresh enabled)")
-    
-    kinesis_query = unified_stream.writeStream \
-        .format("dblstreamgen_kinesis") \
-        .option("stream_name", stream_name) \
-        .option("region", region) \
-        .option("partition_key_field", partition_key_field) \
-        .option("service_credential_name", service_credential_name) \
-        .option("checkpointLocation", "/tmp/dblstreamgen/checkpoints/kinesis") \
-        .trigger(processingTime='1 second') \
-        .start()
+print(f"Writing to Kinesis: {stream_name} ({region})")
+print(f"Using service credential: {service_credential_name}")
 
-elif use_direct_credentials:
-    # Option 2: Direct credentials from Databricks secrets
-    print("✅ Using direct AWS credentials from secrets")
-    aws_key = dbutils.secrets.get(scope="my-scope", key="aws-access-key")
-    aws_secret = dbutils.secrets.get(scope="my-scope", key="aws-secret-key")
-    
-    kinesis_query = unified_stream.writeStream \
-        .format("dblstreamgen_kinesis") \
-        .option("stream_name", stream_name) \
-        .option("region", region) \
-        .option("partition_key_field", partition_key_field) \
-        .option("aws_access_key_id", aws_key) \
-        .option("aws_secret_access_key", aws_secret) \
-        .option("checkpointLocation", "/tmp/dblstreamgen/checkpoints/kinesis") \
-        .trigger(processingTime='1 second') \
-        .start()
-
-else:
-    # Option 3: Cluster instance profile (automatic)
-    print("✅ Using cluster instance profile (recommended for production)")
-    
-    kinesis_query = unified_stream.writeStream \
-        .format("dblstreamgen_kinesis") \
-        .option("stream_name", stream_name) \
-        .option("region", region) \
-        .option("partition_key_field", partition_key_field) \
-        .option("checkpointLocation", "/tmp/dblstreamgen/checkpoints/kinesis") \
-        .trigger(processingTime='1 second') \
-        .start()
+kinesis_query = unified_stream.writeStream \
+    .format("dblstreamgen_kinesis") \
+    .option("stream_name", stream_name) \
+    .option("region", region) \
+    .option("partition_key_field", partition_key_field) \
+    .option("service_credential", service_credential_name) \
+    .option("checkpointLocation", checkpoint_location) \
+    .trigger(processingTime='1 second') \
+    .start()
 
 print(f"✅ Streaming started! Query ID: {kinesis_query.id}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 8: Read from Kinesis and Analyze Distribution
-# MAGIC
-# MAGIC Read back the data from Kinesis to validate the distribution matches our configuration.
+# MAGIC ## Step 8: Read from Kinesis and Parse Data
 
 # COMMAND ----------
 
-# Read from Kinesis
+from pyspark.sql.functions import (
+    col, get_json_object, current_timestamp, 
+    to_timestamp, unix_timestamp
+)
+
+print(f"Reading from Kinesis: {stream_name}")
+
 kinesis_df = (spark.readStream
     .format("kinesis")
     .option("streamName", stream_name)
     .option("region", region)
-    .option("initialPosition", "TRIM_HORIZON")
+    .option("initialPosition", "latest")
+    .option("serviceCredential", service_credential_name)
     .load()
 )
 
-# Parse the data
-from pyspark.sql.functions import from_json, get_json_object, count, sum as spark_sum, col
-
-parsed_df = (kinesis_df
-    .selectExpr("CAST(data AS STRING) as json_data")
-    .withColumn("event_type_id", get_json_object(col("json_data"), "$.event_type_id"))
-    .withColumn("event_timestamp", get_json_object(col("json_data"), "$.event_timestamp"))
-    .withColumn("partition_key", get_json_object(col("json_data"), "$.partition_key"))
-    .withColumn("payload", get_json_object(col("json_data"), "$.serialized_payload"))
+parsed_kinesis_df = (
+    kinesis_df
+    .withColumn("json_str", col("data").cast("string"))
+    .withColumn("event_type_id", get_json_object(col("json_str"), "$.event_type_id"))
+    .withColumn("event_timestamp_str", get_json_object(col("json_str"), "$.event_timestamp"))
+    .withColumn("partition_key", get_json_object(col("json_str"), "$.partition_key"))
+    .withColumn("serialized_payload", get_json_object(col("json_str"), "$.serialized_payload"))
+    .withColumn("event_timestamp", to_timestamp(col("event_timestamp_str")))
+    .withColumn("read_timestamp", current_timestamp())
+    .withColumn("e2e_latency_seconds", 
+        unix_timestamp(col("read_timestamp")) - unix_timestamp(col("event_timestamp")))
+    .withColumn("kinesis_latency_seconds",
+        unix_timestamp(col("approximateArrivalTimestamp")) - unix_timestamp(col("event_timestamp")))
+    .select(
+        "event_type_id", "event_timestamp", "read_timestamp", 
+        "e2e_latency_seconds", "kinesis_latency_seconds", 
+        "partition_key", "serialized_payload", "approximateArrivalTimestamp"
+    )
 )
 
-print("✅ Kinesis read stream configured")
+print("✅ Kinesis read stream configured with E2E latency calculation")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 9: Distribution Analysis
+# MAGIC ## Step 9: Event Distribution Analysis
 # MAGIC
-# MAGIC Analyze the event type distribution to verify it matches the configured weights.
+# MAGIC Display event type distribution with latency metrics in 10-second windows.
 
 # COMMAND ----------
 
-# Aggregate by event_type_id to get counts
-distribution_df = (parsed_df
-    .groupBy("event_type_id")
-    .agg(count("*").alias("count"))
-    .orderBy("event_type_id")
+from pyspark.sql.functions import (
+    count, avg, min as spark_min, max as spark_max, stddev, window
 )
 
-# Write to memory table for analysis
-distribution_query = (distribution_df.writeStream
-    .format("memory")
-    .queryName("event_distribution")
-    .outputMode("complete")
-    .start()
+event_distribution_df = (
+    parsed_kinesis_df
+    .withWatermark("event_timestamp", "30 seconds")
+    .groupBy(
+        window(col("event_timestamp"), "10 seconds"),
+        "event_type_id"
+    )
+    .agg(
+        count("*").alias("event_count"),
+        avg("e2e_latency_seconds").alias("avg_e2e_latency"),
+        spark_min("e2e_latency_seconds").alias("min_e2e_latency"),
+        spark_max("e2e_latency_seconds").alias("max_e2e_latency"),
+        stddev("e2e_latency_seconds").alias("stddev_e2e_latency"),
+        avg("kinesis_latency_seconds").alias("avg_kinesis_latency")
+    )
+    .select(
+        col("window.start").alias("window_start"),
+        col("window.end").alias("window_end"),
+        "event_type_id",
+        "event_count",
+        "avg_e2e_latency",
+        "min_e2e_latency",
+        "max_e2e_latency",
+        "stddev_e2e_latency",
+        "avg_kinesis_latency"
+    )
+    .orderBy("window_start", "event_type_id")
 )
 
-print("✅ Distribution analysis started")
-print("   Analyzing event distribution...")
+print("📊 Event type distribution analysis ready")
 
-# COMMAND ----------
-
-# Let it run for 30 seconds to collect data
-import time
-time.sleep(30)
-
-# Query the distribution
-distribution_results = spark.sql("""
-    SELECT 
-        event_type_id,
-        count,
-        ROUND(count * 100.0 / SUM(count) OVER (), 2) as percentage
-    FROM event_distribution
-    ORDER BY count DESC
-    LIMIT 20
-""")
-
-print("✅ Event Distribution (Top 20):")
-distribution_results.show(20, False)
-
-# Get total counts
-total_counts = spark.sql("SELECT SUM(count) as total FROM event_distribution").collect()[0]['total']
-print(f"\n✅ Total events processed: {total_counts:,}")
-
-# Calculate expected vs actual distribution
-expected_weight = 1.0 / len(config.data['event_types'])
-print(f"✅ Expected percentage per event type: {expected_weight * 100:.4f}%")
+display(event_distribution_df)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Step 10: Stop Streams
 # MAGIC
-# MAGIC When done analyzing, stop all streams.
+# MAGIC When done, stop the write stream. The display query will stop automatically when you stop the cell.
 
 # COMMAND ----------
 
-# Stop all queries
-kinesis_query.stop()
-distribution_query.stop()
-print("✅ All streams stopped")
-
-# COMMAND ----------
-
+# kinesis_query.stop()
+# print("✅ Stream stopped")
