@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 
 from dblstreamgen.config import load_config, Config, ConfigurationError
-from dblstreamgen.builder import FieldMapper, DataGeneratorBuilder
+from dblstreamgen.builder import DataGeneratorBuilder
 from dblstreamgen.orchestrator import StreamOrchestrator
 from dblstreamgen.sinks import KinesisDataSource
 
@@ -12,7 +12,6 @@ __all__ = [
     'load_config',
     'Config',
     'ConfigurationError',
-    'FieldMapper',
     'DataGeneratorBuilder',
     'StreamOrchestrator',
     'KinesisDataSource',

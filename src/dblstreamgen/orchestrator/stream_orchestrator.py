@@ -2,13 +2,12 @@
 
 import logging
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit, when, hash, current_timestamp, struct, to_json, expr, rand
-from typing import Dict, Any, List, Tuple
+from pyspark.sql.functions import col, lit, when, hash, current_timestamp, struct, to_json
+from typing import Dict, Any
 import dbldatagen as dg
 
 from dblstreamgen.config import Config
 from dblstreamgen.builder.spec_builder import DataGeneratorBuilder
-from dblstreamgen.orchestrator.serialization import serialize_to_json, get_payload_columns
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class StreamOrchestrator:
     
     def create_unified_stream(self) -> DataFrame:
         """
-        Create unified stream with wide schema approach.
+        Create unified stream with all generation in dbldatagen.
         
         Returns DataFrame with:
         - event_type_id: Event type identifier
@@ -58,13 +57,12 @@ class StreamOrchestrator:
         - partition_key: Partition key for routing
         - serialized_payload: JSON with event-specific fields (nulls excluded)
         """
-        df = self._create_base_stream_with_types()
-        df = self._add_common_fields(df)
-        field_registry = self._build_field_registry()
-        df = self._add_conditional_fields(df, field_registry)
+        spec = self._build_complete_spec()
+        df = self._build_dataframe_from_spec(spec)
         df = self._serialize_wide_schema(df)
         
         rates = self.calculate_rates()
+        field_registry = self._build_field_registry()
         if rates:
             total_rate = sum(rates.values())
             logger.info(f"Wide schema stream created: {len(self.config.data['event_types'])} event types, "
@@ -75,53 +73,71 @@ class StreamOrchestrator:
         
         return df
     
-    def _create_base_stream_with_types(self) -> DataFrame:
-        """Create base stream with event_type_id distribution."""
+    def _build_complete_spec(self) -> dg.DataGenerator:
+        """Build complete dbldatagen spec with all fields."""
+        spec = self._create_base_spec()
+        spec = self._add_event_type_id_to_spec(spec)
+        spec = self._add_common_fields_to_spec(spec)
+        field_registry = self._build_field_registry()
+        spec = self._add_conditional_fields_to_spec(spec, field_registry)
+        return spec
+    
+    def _create_base_spec(self) -> dg.DataGenerator:
+        """Create base spec with _id column only."""
         if self.config.data['generation_mode'] == 'streaming':
             total_rate = self.config.data['streaming_config']['total_rows_per_second']
-            partitions = self.builder._calculate_partitions_from_rate(total_rate)
-            
-            spec = (dg.DataGenerator(sparkSession=self.spark, name="base_stream", rows=total_rate)
-                .withColumn("_id", "long", minValue=0, maxValue=1000000000, random=True))
-            
-            df = spec.build(withStreaming=True, 
-                          options={'rowsPerSecond': int(total_rate), 'rampUpTimeSeconds': 0})
+            spec = dg.DataGenerator(sparkSession=self.spark, name="base_stream", rows=total_rate)
         else:
             total_rows = self.config.data['batch_config']['total_rows']
             partitions = self.config.data['batch_config'].get('partitions', 8)
-            spec = (dg.DataGenerator(sparkSession=self.spark, name="base_batch", rows=total_rows, partitions=partitions)
-                .withColumn("_id", "long", minValue=0, maxValue=1000000000, random=True))
-            df = spec.build()
+            spec = dg.DataGenerator(sparkSession=self.spark, name="base_batch", 
+                                   rows=total_rows, partitions=partitions)
         
-        return self._add_event_type_distribution(df)
+        return spec.withColumn("_id", "long", minValue=0, maxValue=1000000000, random=True)
     
-    def _add_event_type_distribution(self, df: DataFrame) -> DataFrame:
-        """Add event_type_id based on cumulative weight distribution using hash-based sampling."""
-        cumulative = 0.0
-        type_expr = None
+    def _add_event_type_id_to_spec(self, spec) -> dg.DataGenerator:
+        """Add event_type_id with weighted distribution using dbldatagen."""
+        event_ids = [et['event_type_id'] for et in self.config.data['event_types']]
+        weights = [et['weight'] for et in self.config.data['event_types']]
         
-        for event_type in self.config.data['event_types']:
-            event_id = event_type['event_type_id']
-            weight = event_type['weight']
-            
-            cumulative += weight
-            threshold = int(cumulative * 10000)  # Scale to 0-10000 for precision
-            
-            if type_expr is None:
-                type_expr = when((hash(col("_id")) % 10000) < threshold, lit(event_id))
-            else:
-                type_expr = type_expr.when((hash(col("_id")) % 10000) < threshold, lit(event_id))
-        
-        return df.withColumn("event_type_id", type_expr)
+        return spec.withColumn("event_type_id", "string", values=event_ids, weights=weights, random=True)
     
-    def _add_common_fields(self, df: DataFrame) -> DataFrame:
-        """Add common fields that appear in all events."""
+    def _build_dataframe_from_spec(self, spec) -> DataFrame:
+        """Build DataFrame from complete spec."""
+        if self.config.data['generation_mode'] == 'streaming':
+            total_rate = self.config.data['streaming_config']['total_rows_per_second']
+            return spec.build(withStreaming=True, 
+                            options={'rowsPerSecond': int(total_rate), 'rampUpTimeSeconds': 0})
+        else:
+            return spec.build()
+    
+    def _add_common_fields_to_spec(self, spec) -> dg.DataGenerator:
+        """Add common fields using dbldatagen expr."""
         common_fields = self.config.data.get('common_fields', {})
-        
         for field_name, field_spec in common_fields.items():
-            df = df.withColumn(field_name, self._generate_field_expression(field_spec))
+            sql_expr = self._generate_sql_expression(field_spec)
+            field_type = self._get_spark_type(field_spec)
+            spec = spec.withColumn(field_name, field_type, expr=sql_expr)
+        return spec
+    
+    def _add_conditional_fields_to_spec(self, spec, field_registry: Dict) -> dg.DataGenerator:
+        """Add conditional fields using SQL CASE with IN clause."""
+        for field_name, field_info in field_registry.items():
+            field_spec = field_info['spec']
+            event_types = field_info['event_types']
+            
+            field_sql = self._generate_sql_expression(field_spec)
+            
+            if len(event_types) == 1:
+                sql_expr = f"CASE WHEN event_type_id = '{event_types[0]}' THEN {field_sql} ELSE NULL END"
+            else:
+                event_list = "', '".join(event_types)
+                sql_expr = f"CASE WHEN event_type_id IN ('{event_list}') THEN {field_sql} ELSE NULL END"
+            
+            field_type = self._get_spark_type(field_spec)
+            spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn="event_type_id")
         
-        return df
+        return spec
     
     def _build_field_registry(self) -> Dict[str, Dict[str, Any]]:
         """Build registry of all unique fields across event types."""
@@ -134,61 +150,59 @@ class StreamOrchestrator:
                     registry[field_name]['event_types'].append(event_type['event_type_id'])
         return registry
     
-    def _add_conditional_fields(self, df: DataFrame, field_registry: Dict[str, Dict[str, Any]]) -> DataFrame:
-        """Add event-specific fields with conditional population based on event_type_id."""
-        for field_name, field_info in field_registry.items():
-            field_spec = field_info['spec']
-            event_types_using_field = field_info['event_types']
-            
-            field_expr = None
-            for event_id in event_types_using_field:
-                if field_expr is None:
-                    field_expr = when(col("event_type_id") == event_id, self._generate_field_expression(field_spec))
-                else:
-                    field_expr = field_expr.when(col("event_type_id") == event_id, self._generate_field_expression(field_spec))
-            
-            df = df.withColumn(field_name, field_expr.otherwise(lit(None)))
-        return df
-    
-    def _generate_field_expression(self, field_spec: Dict[str, Any]):
-        """Generate Spark SQL expression for a field based on its type."""
+    def _generate_sql_expression(self, field_spec: Dict[str, Any]) -> str:
+        """Generate SQL expression string for a field."""
         field_type = field_spec.get('type')
         
         if field_type == 'uuid':
-            return expr("uuid()")
+            return "uuid()"
         
         elif field_type == 'int':
             min_val = field_spec.get('range', [0, 100])[0]
             max_val = field_spec.get('range', [0, 100])[1]
-            return (rand() * (max_val - min_val) + min_val).cast('int')
+            return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS INT)"
         
         elif field_type == 'float':
             min_val = field_spec.get('range', [0.0, 100.0])[0]
             max_val = field_spec.get('range', [0.0, 100.0])[1]
-            return (rand() * (max_val - min_val) + min_val).cast('float')
+            return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS FLOAT)"
         
         elif field_type == 'string':
             values = field_spec.get('values', ['value'])
             weights = field_spec.get('weights')
             
             if weights:
-                cumulative, string_expr = 0.0, None
+                cumulative = 0.0
+                sql_expr = "CASE "
                 for value, weight in zip(values, weights):
                     cumulative += weight
-                    string_expr = when(rand() < cumulative, lit(value)) if string_expr is None else string_expr.when(rand() < cumulative, lit(value))
-                return string_expr.otherwise(lit(values[-1]))
+                    sql_expr += f"WHEN rand() < {cumulative} THEN '{value}' "
+                sql_expr += f"ELSE '{values[-1]}' END"
+                return sql_expr
             else:
-                threshold_step, string_expr = 1.0 / len(values), None
+                threshold = 1.0 / len(values)
+                sql_expr = "CASE "
                 for i, value in enumerate(values):
-                    threshold = (i + 1) * threshold_step
-                    string_expr = when(rand() < threshold, lit(value)) if string_expr is None else string_expr.when(rand() < threshold, lit(value))
-                return string_expr.otherwise(lit(values[-1]))
+                    sql_expr += f"WHEN rand() < {(i+1) * threshold} THEN '{value}' "
+                sql_expr += f"ELSE '{values[-1]}' END"
+                return sql_expr
         
         elif field_type == 'timestamp':
-            return current_timestamp()
+            return "current_timestamp()"
         
         else:
             raise ValueError(f"Unsupported field type: {field_type}")
+    
+    def _get_spark_type(self, field_spec: Dict[str, Any]) -> str:
+        """Map field type to Spark SQL type string."""
+        type_map = {
+            'uuid': 'string',
+            'int': 'int', 
+            'float': 'float',
+            'string': 'string',
+            'timestamp': 'timestamp'
+        }
+        return type_map.get(field_spec.get('type'), 'string')
     
     def _serialize_wide_schema(self, df: DataFrame) -> DataFrame:
         """Serialize wide schema to unified output format with JSON payload."""
@@ -207,8 +221,9 @@ class StreamOrchestrator:
         if partition_key_field not in df.columns:
             raise ValueError(f"Partition key field '{partition_key_field}' not found in DataFrame")
         
-        metadata_cols = ['event_type_id', timestamp_field, partition_key_field, '_id']
-        payload_cols = [c for c in df.columns if c not in metadata_cols]
+        # Include event_type_id and timestamp in payload, exclude only _id and partition_key
+        exclude_from_payload = ['_id', partition_key_field]
+        payload_cols = [c for c in df.columns if c not in exclude_from_payload]
         
         df_serialized = df.withColumn("serialized_payload",
             to_json(struct(*[col(c) for c in payload_cols]), {"ignoreNullFields": "true"}))

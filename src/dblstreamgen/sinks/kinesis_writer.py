@@ -52,8 +52,6 @@ class KinesisStreamWriter(DataSourceStreamWriter):
     
     def write(self, iterator):
         """Write partition data to Kinesis in 500-record chunks with 50 parallel requests."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
         try:
             client = self._create_kinesis_client()
         except Exception as e:
