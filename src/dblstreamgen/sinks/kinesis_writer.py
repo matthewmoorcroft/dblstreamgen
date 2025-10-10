@@ -63,11 +63,11 @@ class KinesisStreamWriter(DataSourceStreamWriter):
             
             for row in iterator:
                 try:
-                    payload, partition_key = row.serialized_payload, row.partition_key
+                    payload, partition_key = row.data, row.partition_key
                 except AttributeError:
                     row_dict = row.asDict()
-                    payload = row_dict.get('serialized_payload', '')
-                    partition_key = row_dict.get('partition_key', row_dict.get('event_type_id', '0'))
+                    payload = row_dict.get('data', '')
+                    partition_key = row_dict.get('partition_key', '0')
                 
                 if payload is None or partition_key is None:
                     continue

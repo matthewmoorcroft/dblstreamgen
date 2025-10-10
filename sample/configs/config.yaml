@@ -1,7 +1,7 @@
 # dblstreamgen v0.1.0 Configuration Example
 # 
 # This configuration demonstrates generating synthetic streaming data
-# for a generic web application use case.
+# matching customer's arbitrary-event-telemetry schema structure.
 
 # ============================================================================
 # MAIN CONFIGURATION
@@ -29,8 +29,8 @@ sink_config:
   stream_name: "web-events-stream"
   region: "us-east-1"
   
-  # Which field to use for Kinesis partitioning
-  partition_key_field: "user_id"
+  # Which field to use for Kinesis partitioning (matches customer's "event_key" pattern)
+  partition_key_field: "event_key"
   
   # AUTHENTICATION (choose ONE):
   # Option 1: Unity Catalog service credential (single-user clusters, auto-refresh)
@@ -47,21 +47,31 @@ sink_config:
 # ============================================================================
 
 # Common fields that appear in ALL event types
+# These match the customer's bronze ingest expectations
 common_fields:
-  event_timestamp:
-    type: "timestamp"  # When the event occurred
+  event_name:
+    type: "string"  # Event type identifier (extracted in bronze as payload:event_name)
+    # Note: Automatically populated with event_type_id values from event_types
   
-  user_id:
-    type: "int"
-    range: [1, 1000000]  # 1 million unique users
+  event_key:
+    type: "string"  # Partition key for Kinesis (extracted in bronze as payload:event_key)
+    # Generate user-based keys for partitioning
+    values: ["user_1", "user_2", "user_3", "user_4", "user_5", 
+             "user_6", "user_7", "user_8", "user_9", "user_10"]
+  
+  event_timestamp:
+    type: "timestamp"  # When the event occurred (extracted in bronze as payload:event_timestamp)
+  
+  event_id:
+    type: "uuid"  # Unique event identifier
   
   session_id:
-    type: "uuid"  # Unique session identifier
+    type: "uuid"  # Session tracking
 
 # Event type definitions with weights (must sum to 1.0)
 event_types:
   # Page view events (60% of traffic)
-  - event_type_id: "user.page_view"
+  - event_type_id: "user.page_view"  # Internal identifier, gets written to event_name field
     weight: 0.60
     fields:
       page_url:
@@ -72,6 +82,9 @@ event_types:
         type: "string"
         values: ["direct", "google", "facebook", "email", "other"]
         weights: [0.30, 0.35, 0.15, 0.10, 0.10]
+      user_id:
+        type: "int"
+        range: [1, 1000000]
   
   # Click events (30% of traffic)
   - event_type_id: "user.click"
@@ -85,6 +98,9 @@ event_types:
         type: "string"
         values: ["button", "link", "image"]
         weights: [0.50, 0.40, 0.10]
+      user_id:
+        type: "int"
+        range: [1, 1000000]
   
   # Purchase events (10% of traffic)
   - event_type_id: "user.purchase"
@@ -98,6 +114,9 @@ event_types:
       product_count:
         type: "int"
         range: [1, 10]
+      user_id:
+        type: "int"
+        range: [1, 1000000]
 
 # ============================================================================
 # NOTES
@@ -106,3 +125,21 @@ event_types:
 # - total_rows_per_second is distributed by weights
 # - All fields in common_fields appear in every event type
 # - Event-specific fields only appear in that event type
+#
+# Customer Bronze Ingest Compatibility:
+# - event_name: Extracted as payload:event_name in bronze layer
+# - event_key: Extracted as payload:event_key, used for partitioning
+# - event_timestamp: Extracted as payload:event_timestamp, used for date partitioning
+# - All fields are at the top level of the JSON payload (flat structure)
+#
+# Example Kinesis record data field:
+# {
+#   "event_name": "user.page_view",
+#   "event_key": "user_12345",
+#   "event_timestamp": "2025-10-10T12:00:00.123Z",
+#   "event_id": "552c2a1e-5ab5-4a0f-95d6-57a7866fb624",
+#   "session_id": "e28c2df6-1b49-4bc2-be25-5515f39b721e",
+#   "page_url": "/home",
+#   "referrer": "google",
+#   "user_id": 12345
+# }

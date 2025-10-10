@@ -3,12 +3,17 @@
 # MAGIC # dblstreamgen v0.1.0 - Simple Streaming Example
 # MAGIC
 # MAGIC This notebook demonstrates basic usage of dblstreamgen v0.1.0 to generate
-# MAGIC synthetic streaming data and write to AWS Kinesis.
+# MAGIC synthetic streaming data and write to AWS Kinesis using flat JSON schema.
 # MAGIC
 # MAGIC ## Prerequisites
 # MAGIC - Databricks Runtime 15.4 LTS or above
-# MAGIC - AWS credentials configured in Databricks secrets
+# MAGIC - AWS credentials configured via Unity Catalog service credential
 # MAGIC - Kinesis stream created in AWS
+# MAGIC
+# MAGIC ## Schema Structure
+# MAGIC - Data is written as flat JSON to Kinesis Data field
+# MAGIC - All event fields (event_name, event_key, event_timestamp, etc.) are at top level
+# MAGIC - Compatible with customer bronze ingest pipeline (payload:field_name parsing)
 
 # COMMAND ----------
 
@@ -116,7 +121,7 @@ dbutils.fs.rm(checkpoint_location, True)
 sink_config = config.data['sink_config']
 stream_name = sink_config['stream_name']
 region = sink_config['region']
-partition_key_field = sink_config.get('partition_key_field', 'partition_key')
+partition_key_field = sink_config.get('partition_key_field', 'event_key')
 service_credential_name = sink_config.get('service_credential_name')
 
 print(f"Writing to Kinesis: {stream_name} ({region})")
@@ -157,13 +162,15 @@ kinesis_df = (spark.readStream
     .load()
 )
 
+# Parse the flat JSON structure from the data field
+# The data field now contains ALL fields in flat JSON (event_name, event_key, event_timestamp, etc.)
 parsed_kinesis_df = (
     kinesis_df
-    .withColumn("json_str", col("data").cast("string"))
-    .withColumn("event_type_id", get_json_object(col("json_str"), "$.event_type_id"))
-    .withColumn("event_timestamp_str", get_json_object(col("json_str"), "$.event_timestamp"))
-    .withColumn("partition_key", get_json_object(col("json_str"), "$.partition_key"))
-    .withColumn("serialized_payload", get_json_object(col("json_str"), "$.serialized_payload"))
+    .withColumn("payload", col("data").cast("string"))
+    .withColumn("event_name", get_json_object(col("payload"), "$.event_name"))
+    .withColumn("event_key", get_json_object(col("payload"), "$.event_key"))
+    .withColumn("event_timestamp_str", get_json_object(col("payload"), "$.event_timestamp"))
+    .withColumn("event_id", get_json_object(col("payload"), "$.event_id"))
     .withColumn("event_timestamp", to_timestamp(col("event_timestamp_str")))
     .withColumn("read_timestamp", current_timestamp())
     .withColumn("e2e_latency_seconds", 
@@ -171,13 +178,13 @@ parsed_kinesis_df = (
     .withColumn("kinesis_latency_seconds",
         unix_timestamp(col("approximateArrivalTimestamp")) - unix_timestamp(col("event_timestamp")))
     .select(
-        "event_type_id", "event_timestamp", "read_timestamp", 
+        "event_name", "event_key", "event_id", "event_timestamp", "read_timestamp", 
         "e2e_latency_seconds", "kinesis_latency_seconds", 
-        "partition_key", "serialized_payload", "approximateArrivalTimestamp"
+        "payload", "approximateArrivalTimestamp"
     )
 )
 
-print("✅ Kinesis read stream configured with E2E latency calculation")
+print("✅ Kinesis read stream configured with flat JSON parsing and E2E latency calculation")
 
 # COMMAND ----------
 
@@ -197,7 +204,7 @@ event_distribution_df = (
     .withWatermark("event_timestamp", "30 seconds")
     .groupBy(
         window(col("event_timestamp"), "10 seconds"),
-        "event_type_id"
+        "event_name"
     )
     .agg(
         count("*").alias("event_count"),
@@ -210,7 +217,7 @@ event_distribution_df = (
     .select(
         col("window.start").alias("window_start"),
         col("window.end").alias("window_end"),
-        "event_type_id",
+        "event_name",
         "event_count",
         "avg_e2e_latency",
         "min_e2e_latency",
@@ -218,10 +225,10 @@ event_distribution_df = (
         "stddev_e2e_latency",
         "avg_kinesis_latency"
     )
-    .orderBy("window_start", "event_type_id")
+    .orderBy("window_start", "event_name")
 )
 
-print("📊 Event type distribution analysis ready")
+print("📊 Event distribution analysis ready (flat JSON schema)")
 
 display(event_distribution_df)
 

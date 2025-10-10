@@ -2,6 +2,7 @@
 # 
 # This configuration is designed to test dblstreamgen at scale with
 # a large number of event types (1500) to validate performance.
+# Schema aligned with customer's bronze ingest expectations.
 
 # ============================================================================
 # MAIN CONFIGURATION
@@ -18,7 +19,7 @@ sink_config:
   type: kinesis
   stream_name: stress-test-stream
   region: us-east-1
-  partition_key_field: user_id
+  partition_key_field: event_key
   service_credential_name: my-kinesis-credential
 
 # ============================================================================
@@ -26,10 +27,22 @@ sink_config:
 # ============================================================================
 
 common_fields:
+  event_name:
+    type: string
+    # Automatically populated with event_type_id values
+  
+  event_key:
+    type: string
+    # Partition key for Kinesis routing
+    values: ["key_1", "key_2", "key_3", "key_4", "key_5", 
+             "key_6", "key_7", "key_8", "key_9", "key_10"]
+  
   event_timestamp:
     type: timestamp
-  user_id:
+  
+  event_id:
     type: uuid
+  
   session_id:
     type: uuid
 
