@@ -20,7 +20,7 @@ sink_config:
   stream_name: stress-test-stream
   region: us-east-1
   partition_key_field: event_key
-  service_credential_name: my-kinesis-credential
+  service_credential: my-kinesis-credential
 
 # ============================================================================
 # SCHEMA CONFIGURATION

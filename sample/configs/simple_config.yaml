@@ -34,7 +34,7 @@ sink_config:
   
   # AUTHENTICATION (choose ONE):
   # Option 1: Unity Catalog service credential (single-user clusters, auto-refresh)
-  service_credential_name: "my-kinesis-credential"
+  service_credential: "my-kinesis-credential"
   
   # Option 2: Direct credentials from Databricks secrets (legacy)
   # aws_access_key_id: "{{secrets/my-scope/aws-access-key}}"

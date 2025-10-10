@@ -122,17 +122,17 @@ sink_config = config.data['sink_config']
 stream_name = sink_config['stream_name']
 region = sink_config['region']
 partition_key_field = sink_config.get('partition_key_field', 'event_key')
-service_credential_name = sink_config.get('service_credential_name')
+service_credential = sink_config.get('service_credential')
 
 print(f"Writing to Kinesis: {stream_name} ({region})")
-print(f"Using service credential: {service_credential_name}")
+print(f"Using service credential: {service_credential}")
 
 kinesis_query = unified_stream.writeStream \
     .format("dblstreamgen_kinesis") \
     .option("stream_name", stream_name) \
     .option("region", region) \
     .option("partition_key_field", partition_key_field) \
-    .option("service_credential", service_credential_name) \
+    .option("service_credential", service_credential) \
     .option("checkpointLocation", checkpoint_location) \
     .trigger(processingTime='1 second') \
     .start()
@@ -158,7 +158,7 @@ kinesis_df = (spark.readStream
     .option("streamName", stream_name)
     .option("region", region)
     .option("initialPosition", "latest")
-    .option("serviceCredential", service_credential_name)
+    .option("serviceCredential", service_credential)
     .load()
 )
 
