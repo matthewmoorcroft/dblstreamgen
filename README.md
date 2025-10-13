@@ -12,12 +12,12 @@
 
 `dblstreamgen` is a **Databricks-native library** for generating realistic synthetic streaming data at scale. It's designed to test and validate data pipelines, streaming applications, and Spark Structured Streaming without needing production data.
 
-**Perfect for:**
-- 🧪 Testing streaming pipelines (Kinesis, Kafka, Event Hubs)
-- 📊 Validating Spark Structured Streaming pipelines
-- 🏋️ Load testing and performance benchmarking
-- 🎓 Training and demos with realistic data
-- 🔒 Development without access to production data
+**Use Cases:**
+- Testing streaming pipelines (Kinesis, Kafka, Event Hubs)
+- Validating Spark Structured Streaming pipelines
+- Load testing and performance benchmarking
+- Training and demonstrations with realistic data
+- Development environments without production data access
 
 ---
 
@@ -25,18 +25,18 @@
 
 `dblstreamgen` is a Spark/Databricks library for generating synthetic streaming data using `dbldatagen`. It supports multiple event types, weighted rate distribution, and streaming to various sinks (Kinesis, Kafka, Event Hubs, Delta).
 
-**Key Features**:
-- 🎯 **Config-driven** - Define schemas in YAML
-- ⚡ **dbldatagen-powered** - Leverages Spark for scale
-- 🔀 **Multiple event types** - Wide schema approach for 1500+ types
-- 📤 **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta (planned)
-- 🎲 **Use-case agnostic** - Works for any domain
+**Key Features:**
+- **Config-driven** - Define schemas in YAML
+- **dbldatagen-powered** - Leverages Spark for scale
+- **Multiple event types** - Wide schema approach for 1500+ types
+- **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta (planned)
+- **Use-case agnostic** - Works for any domain
 
 ---
 
 ## Installation
 
-### Option 1: Databricks (Recommended)
+### Databricks
 
 #### Step 1: Upload Wheel to Unity Catalog Volume
 
@@ -65,19 +65,7 @@ dbutils.library.restartPython()
 ```python
 import dblstreamgen
 
-print(f"✅ dblstreamgen v{dblstreamgen.__version__} installed successfully!")
-```
-
-### Option 2: Local Development (Limited)
-
-**Note**: v0.1.0 requires PySpark and is designed for Databricks. Local use is limited.
-
-```bash
-# Install from wheel
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl
-
-# Or install in development mode
-pip install -e .
+print(f"dblstreamgen v{dblstreamgen.__version__} installed successfully")
 ```
 
 ---
@@ -113,7 +101,7 @@ config = dblstreamgen.load_config("/Workspace/path/to/simple_config.yaml")
 
 # Create orchestrator
 orchestrator = dblstreamgen.StreamOrchestrator(spark, config)
-print("✅ Setup complete!")
+print("Setup complete")
 ```
 
 **Cell 3 - Generate & Write to Kinesis:**
@@ -132,7 +120,7 @@ query = unified_stream.writeStream \
     .trigger(processingTime='1 second') \
     .start()
 
-print(f"✅ Streaming to Kinesis! Query ID: {query.id}")
+print(f"Streaming to Kinesis - Query ID: {query.id}")
 ```
 
 **Cell 4 - Monitor (Optional):**
@@ -147,7 +135,7 @@ query.recentProgress
 # query.stop()
 ```
 
-📓 **See the complete example:** `sample/notebooks/01_simple_example.py` includes reading back from Kinesis and analyzing event distributions.
+**See the complete example:** `sample/notebooks/01_simple_example.py` includes reading back from Kinesis and analyzing event distributions.
 
 ---
 
@@ -174,7 +162,7 @@ event_types:
       referrer: {...}
 ```
 
-📁 See `sample/configs/simple_config.yaml` for the complete configuration.
+See `sample/configs/simple_config.yaml` for the complete configuration.
 
 ### Step 2: Generate and Stream Data
 
@@ -337,7 +325,7 @@ event_types:
     weight: 0.3    # 30%
   - event_type_id: "type_c"
     weight: 0.1    # 10%
-# Total: 1.0 ✅
+# Total: 1.0 (correct)
 ```
 
 ---
@@ -356,7 +344,7 @@ Adapt this pattern for your use case by:
 2. Updating field names and value distributions
 3. Adjusting weights to match your traffic patterns
 
-📓 **See it in action:** `sample/notebooks/01_simple_example.py` shows the complete workflow.
+**See it in action:** `sample/notebooks/01_simple_example.py` shows the complete workflow.
 
 ### Stress Testing (see 1500_events_config.yaml)
 
@@ -376,24 +364,20 @@ For scale testing with 1500+ event types, see `sample/configs/1500_events_config
 dbutils.library.restartPython()
 ```
 
-### ModuleNotFoundError: No module named 'pyspark'
-
-**This is expected locally** - v0.1.0 requires a Spark environment (Databricks). Use Databricks Runtime 15.4 LTS or above.
-
 ### ConfigurationError: Total weights must sum to 1.0
 
 Check that your event type weights sum to exactly 1.0:
 
 ```yaml
-# ❌ Wrong
+# Wrong - Total: 1.1
 event_types:
   - event_type_id: "a"
     weight: 0.5
   - event_type_id: "b"
     weight: 0.6
-# Total: 1.1 (error!)
+# Total: 1.1 (error)
 
-# ✅ Correct
+# Correct - Total: 1.0
 event_types:
   - event_type_id: "a"
     weight: 0.5
@@ -501,12 +485,12 @@ sink_config:
 
 ## Documentation
 
-- 📝 **Example Config**: See `sample/configs/simple_config.yaml`
-- 📊 **Stress Test Config**: See `sample/configs/1500_events_config.yaml`
-- 📓 **Example Notebook**: See `sample/notebooks/01_simple_example.py`
-- 🏗️ **Technical Reference**: See `docs/agent_context/V0.1.0_REFERENCE.md`
-- 📋 **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
-- 🚀 **Release Notes**: `V0.1.0_RELEASE.md`
+- **Example Config**: `sample/configs/simple_config.yaml`
+- **Stress Test Config**: `sample/configs/1500_events_config.yaml`
+- **Example Notebook**: `sample/notebooks/01_simple_example.py`
+- **Technical Reference**: `docs/agent_context/V0.1.0_REFERENCE.md`
+- **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
+- **Release Notes**: `V0.1.0_RELEASE.md`
 
 ---
 
@@ -519,10 +503,10 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 ## Support
 
 Need help? Check out:
-- 📋 **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
-- 🚀 **Release Notes**: `V0.1.0_RELEASE.md`
-- 📊 **Project Status**: `docs/agent_context/PROJECT_STATUS.md`
-- 🐛 **Issues**: `docs/agent_context/github_issues/`
+- **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
+- **Release Notes**: `V0.1.0_RELEASE.md`
+- **Project Status**: `docs/agent_context/PROJECT_STATUS.md`
+- **Issues**: `docs/agent_context/github_issues/`
 
 ---
 
@@ -533,7 +517,5 @@ Need help? Check out:
 - Community contributors
 
 ---
-
-**Happy streaming!** 🚀
 
 *dblstreamgen v0.1.0 - Synthetic streaming data generation for Databricks*
