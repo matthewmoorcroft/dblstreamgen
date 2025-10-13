@@ -133,8 +133,14 @@ class StreamOrchestrator:
     def _add_conditional_fields_to_spec(self, spec, field_registry: Dict) -> dg.DataGenerator:
         """Add conditional fields using SQL CASE with IN clause."""
         event_type_field = self._get_event_type_field_name()
+        common_field_names = set(self.config.data.get('common_fields', {}).keys())
         
         for field_name, field_info in field_registry.items():
+            # Skip fields that are already added as common fields
+            if field_name in common_field_names:
+                logger.debug(f"Skipping conditional field '{field_name}' (already in common_fields)")
+                continue
+            
             field_spec = field_info['spec']
             event_types = field_info['event_types']
             
