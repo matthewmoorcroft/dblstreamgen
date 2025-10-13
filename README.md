@@ -4,7 +4,7 @@
 
 [![Databricks](https://img.shields.io/badge/Databricks-15.4%2B-orange)](https://databricks.com)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
+[![License](https://img.shields.io/badge/License-Databricks-green)](LICENSE.md)
 
 ---
 
@@ -404,14 +404,6 @@ sink_config:
   # Library will calculate based on throughput
 ```
 
-### Streaming Pipeline Drops Records
-
-If your Spark Structured Streaming ingest drops records on constraints like `event_key_is_present`:
-
-1. **Check for duplicate fields:** Don't define the same field in both `common_fields` and event type `fields`
-2. **Verify JSON structure:** Use `get_json_object(payload, '$.event_key')` to test extraction
-3. **Check field names:** Ensure config field names match your streaming pipeline extraction logic
-
 ### Kinesis Authentication Fails
 
 **For service_credential:**
@@ -488,25 +480,19 @@ sink_config:
 - **Example Config**: `sample/configs/simple_config.yaml`
 - **Stress Test Config**: `sample/configs/1500_events_config.yaml`
 - **Example Notebook**: `sample/notebooks/01_simple_example.py`
-- **Technical Reference**: `docs/agent_context/V0.1.0_REFERENCE.md`
-- **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
-- **Release Notes**: `V0.1.0_RELEASE.md`
+
 
 ---
 
 ## License
 
-Apache License 2.0 - see [LICENSE](LICENSE) for details.
+Databricks License - see [LICENSE.md](LICENSE.md) for details.
 
----
+This library is licensed under the Databricks License and is intended for use in connection with Databricks Services.
 
-## Support
 
-Need help? Check out:
-- **Technical Spec**: `docs/agent_context/TECHNICAL_SPECIFICATION.md`
-- **Release Notes**: `V0.1.0_RELEASE.md`
-- **Project Status**: `docs/agent_context/PROJECT_STATUS.md`
-- **Issues**: `docs/agent_context/github_issues/`
+
+
 
 ---
 

@@ -9,12 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class DataGeneratorBuilder:
-    """
-    Utility class for partition calculation (legacy support).
-    
-    Most generation logic has moved to StreamOrchestrator with dbldatagen expr.
-    This class now only provides partition calculation utilities.
-    """
+    """Utility class for partition calculations and streaming configuration."""
     
     def __init__(self, spark: SparkSession, config: Config):
         """
@@ -35,7 +30,7 @@ class DataGeneratorBuilder:
             total_rows_per_second: Total throughput
             
         Returns:
-            int: Partition count
+            Partition count rounded to nearest multiple of 4
         """
         rate_based = total_rows_per_second // 800
         bounded = max(4, rate_based)
@@ -53,6 +48,6 @@ class DataGeneratorBuilder:
             value: Input value
             
         Returns:
-            int: Value rounded to multiple of 4
+            Value rounded to multiple of 4 (minimum 4)
         """
-        return max(4, (value + 2) // 4 * 4)  # Round to nearest, minimum 4
+        return max(4, (value + 2) // 4 * 4)

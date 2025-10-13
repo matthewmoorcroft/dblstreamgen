@@ -13,12 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class StreamOrchestrator:
-    """
-    Orchestrates multiple event type streams into a unified stream.
-    
-    Uses wide schema approach to efficiently handle large numbers of event types.
-    All fields are generated conditionally based on event_type_id.
-    """
+    """Orchestrates multiple event type streams into a unified stream using wide schema approach."""
     
     def __init__(self, spark: SparkSession, config: Config):
         """
@@ -49,13 +44,10 @@ class StreamOrchestrator:
     
     def create_unified_stream(self) -> DataFrame:
         """
-        Create unified stream with all generation in dbldatagen.
+        Create unified stream with all fields generated via dbldatagen.
         
-        Returns DataFrame with:
-        - event_type_id: Event type identifier
-        - event_timestamp: Event timestamp
-        - partition_key: Partition key for routing
-        - serialized_payload: JSON with event-specific fields (nulls excluded)
+        Returns:
+            DataFrame with partition_key and data columns for streaming sinks
         """
         spec = self._build_complete_spec()
         df = self._build_dataframe_from_spec(spec)
@@ -74,7 +66,12 @@ class StreamOrchestrator:
         return df
     
     def _get_event_type_field_name(self) -> str:
-        """Get the field name for event type (event_name or event_type_id)."""
+        """
+        Get the event type field name from configuration.
+        
+        Returns:
+            'event_name' if defined in common_fields, otherwise 'event_type_id'
+        """
         return 'event_name' if 'event_name' in self.config.data.get('common_fields', {}) else 'event_type_id'
     
     def _build_complete_spec(self) -> dg.DataGenerator:
@@ -87,7 +84,7 @@ class StreamOrchestrator:
         return spec
     
     def _create_base_spec(self) -> dg.DataGenerator:
-        """Create base spec with _id column only."""
+        """Initialize dbldatagen spec with internal _id column for uniqueness."""
         if self.config.data['generation_mode'] == 'streaming':
             total_rate = self.config.data['streaming_config']['total_rows_per_second']
             spec = dg.DataGenerator(sparkSession=self.spark, name="base_stream", rows=total_rate)
@@ -169,7 +166,17 @@ class StreamOrchestrator:
         return registry
     
     def _generate_sql_expression(self, field_spec: Dict[str, Any]) -> str:
-        """Generate SQL expression string for a field."""
+        """
+        Generate SQL expression for field generation.
+        
+        Supports: uuid(), CAST(rand()...) for int/float, CASE/WHEN for strings, current_timestamp()
+        
+        Args:
+            field_spec: Field specification with type and parameters
+            
+        Returns:
+            SQL expression string
+        """
         field_type = field_spec.get('type')
         
         if field_type == 'uuid':
@@ -247,8 +254,7 @@ class StreamOrchestrator:
         if partition_key_field not in df.columns:
             raise ValueError(f"Partition key field '{partition_key_field}' not found in DataFrame")
         
-        # Create flat JSON with ALL fields except internal _id
-        # This matches customer's bronze ingest expectations
+        # Create flat JSON with all fields except internal _id
         payload_cols = [c for c in df.columns if c != '_id']
         
         df_serialized = df.withColumn("data",

@@ -11,10 +11,12 @@ logger = logging.getLogger(__name__)
 
 class KinesisDataSource(DataSource):
     """
-    PySpark DataSource for AWS Kinesis with parallel batching.
+    PySpark DataSource for AWS Kinesis with optimized parallel batching.
     
-    Kinesis limits: 1000 records/sec per shard, 500 records per PutRecords request.
-    Recommended shards: total_rows_per_second / 1000.
+    Kinesis API limits:
+    - 1000 records/sec per shard
+    - 500 records per PutRecords call
+    - Recommended shards: ceil(total_events_per_sec / 1000)
     """
     
     @classmethod
@@ -28,7 +30,7 @@ class KinesisDataSource(DataSource):
 
 
 class KinesisStreamWriter(DataSourceStreamWriter):
-    """Kinesis stream writer with 500-record batching and 50 parallel requests per partition."""
+    """Kinesis stream writer with 500-record batching and parallel request processing."""
     
     def __init__(self, options):
         """Initialize Kinesis stream writer with authentication options."""
@@ -51,7 +53,7 @@ class KinesisStreamWriter(DataSourceStreamWriter):
     
     
     def write(self, iterator):
-        """Write partition data to Kinesis in 500-record chunks with 50 parallel requests."""
+        """Write partition data to Kinesis with parallel batching."""
         try:
             client = self._create_kinesis_client()
         except Exception as e:
@@ -146,7 +148,10 @@ class KinesisStreamWriter(DataSourceStreamWriter):
                 session = boto3.Session(botocore_session=credential_provider)
                 return session.client('kinesis', region_name=self.region, config=client_config)
             except Exception as e:
-                raise RuntimeError(f"Service credential '{self.service_credential}' failed: {e}")
+                raise RuntimeError(
+                    f"Failed to authenticate with service credential '{self.service_credential}'. "
+                    f"Ensure: 1) Single-user cluster, 2) Credential exists, 3) You have USE privilege. Error: {e}"
+                )
         
         elif self.aws_access_key and self.aws_secret_key:
             client_kwargs = {

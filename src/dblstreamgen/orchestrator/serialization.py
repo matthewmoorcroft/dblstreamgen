@@ -8,10 +8,9 @@ from typing import List
 
 def get_payload_columns(df: DataFrame, exclude_cols: List[str]) -> List[str]:
     """
-    Get all DataFrame columns except the excluded ones.
+    Get DataFrame columns excluding specified columns.
     
-    Typically used to get payload columns by excluding metadata columns
-    like event_type_id, event_timestamp, and partition key.
+    Typically used to get payload columns by excluding metadata columns.
     
     Args:
         df: Input DataFrame
