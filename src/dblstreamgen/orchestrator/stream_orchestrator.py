@@ -7,7 +7,6 @@ from typing import Dict, Any
 import dbldatagen as dg
 
 from dblstreamgen.config import Config
-from dblstreamgen.builder.spec_builder import DataGeneratorBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,6 @@ class StreamOrchestrator:
         """
         self.spark = spark
         self.config = config
-        self.builder = DataGeneratorBuilder(spark, config)
     
     def calculate_rates(self) -> Dict[str, float]:
         """Calculate rows per second for each event type based on weights (streaming mode only)."""
