@@ -87,10 +87,13 @@ for event_id, rate in rates.items():
 # COMMAND ----------
 
 # Generate unified stream (all event types)
+# serialize=True (default) creates (partition_key, data) format for Kinesis/Kafka
+# Use serialize=False for Delta/Parquet/JSON to get wide schema with typed columns
 unified_stream = orchestrator.create_unified_stream()
 
 print("✅ Unified stream created")
 print(f"   Is streaming: {unified_stream.isStreaming}")
+print("   Format: Serialized (partition_key, data) for Kinesis")
 print("\nSchema:")
 unified_stream.printSchema()
 
@@ -235,11 +238,45 @@ display(event_distribution_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 10: Stop Streams
+# MAGIC ## Step 10: Alternative - Write to Delta Lake
+# MAGIC
+# MAGIC For analytics use cases, write to Delta instead of Kinesis using wide schema format.
+
+# COMMAND ----------
+
+# Uncomment to try Delta Lake output:
+
+# # Generate wide schema (NOT serialized) for Delta
+# wide_stream = orchestrator.create_unified_stream(serialize=False)
+# 
+# print("✅ Wide schema stream created for Delta")
+# print("\nSchema:")
+# wide_stream.printSchema()
+# 
+# # Write to Delta table
+# delta_checkpoint = "/tmp/dblstreamgen/checkpoints/delta"
+# dbutils.fs.rm(delta_checkpoint, True)
+# 
+# delta_query = wide_stream.writeStream \
+#     .format("delta") \
+#     .outputMode("append") \
+#     .option("checkpointLocation", delta_checkpoint) \
+#     .partitionBy("event_name") \
+#     .option("mergeSchema", "true") \
+#     .option("optimizeWrite", "true") \
+#     .table("users.matthew_moorcroft.streaming_events")
+# 
+# print(f"✅ Streaming to Delta! Query ID: {delta_query.id}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 11: Stop Streams
 # MAGIC
 # MAGIC When done, stop the write stream. The display query will stop automatically when you stop the cell.
 
 # COMMAND ----------
 
 # kinesis_query.stop()
+# # delta_query.stop()  # If using Delta
 # print("✅ Stream stopped")

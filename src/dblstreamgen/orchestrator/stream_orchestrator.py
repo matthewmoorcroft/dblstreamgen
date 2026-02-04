@@ -40,25 +40,56 @@ class StreamOrchestrator:
         
         return rates
     
-    def create_unified_stream(self) -> DataFrame:
+    def create_unified_stream(self, serialize: bool = True) -> DataFrame:
         """
         Create unified stream with all fields generated via dbldatagen.
         
+        Args:
+            serialize: If True, returns (partition_key, data) format for Kinesis/Kafka.
+                      If False, returns wide schema with typed columns for Delta/Parquet/JSON/CSV.
+                      Default: True (backward compatible)
+        
         Returns:
-            DataFrame with partition_key and data columns for streaming sinks
+            DataFrame - Format depends on serialize parameter:
+                - serialize=True: Two columns (partition_key, data) with JSON payload
+                - serialize=False: Wide schema with all typed columns
+        
+        Examples:
+            >>> # For Kinesis/Kafka (message-based sinks)
+            >>> stream = orchestrator.create_unified_stream(serialize=True)
+            >>> stream.printSchema()
+            root
+             |-- partition_key: string
+             |-- data: string (JSON)
+            
+            >>> # For Delta/Parquet/JSON/CSV (file/table-based sinks)
+            >>> stream = orchestrator.create_unified_stream(serialize=False)
+            >>> stream.printSchema()
+            root
+             |-- event_name: string
+             |-- event_id: string
+             |-- event_timestamp: timestamp
+             |-- user_id: string
+             |-- ... (all fields as typed columns)
         """
         spec = self._build_complete_spec()
         df = self._build_dataframe_from_spec(spec)
-        df = self._serialize_wide_schema(df)
         
+        # Only serialize if requested (for Kinesis/Kafka)
+        if serialize:
+            df = self._serialize_wide_schema(df)
+        
+        # Log creation with format type
         rates = self.calculate_rates()
         field_registry = self._build_field_registry()
+        format_desc = "serialized (partition_key, data)" if serialize else "wide schema"
+        
         if rates:
             total_rate = sum(rates.values())
-            logger.info(f"Wide schema stream created: {len(self.config.data['event_types'])} event types, "
+            logger.info(f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
                        f"{len(field_registry)} unique fields, target {total_rate:,.0f} rows/sec")
         else:
-            logger.info(f"Wide schema stream created: {len(self.config.data['event_types'])} event types, "
+            logger.info(f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
                        f"{len(field_registry)} unique fields")
         
         return df

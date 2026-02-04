@@ -194,27 +194,71 @@ unified_stream.printSchema()
 display(unified_stream)
 ```
 
-### Understanding the Output
+### Understanding Output Formats
 
-The library generates a DataFrame with two columns:
-- **partition_key**: Used for Kinesis sharding (based on `partition_key_field` in config)
-- **data**: Flat JSON string containing ALL event fields
+The library can generate data in **two formats** depending on your sink type:
 
-Example `data` field content:
+#### **Format 1: Serialized (for Kinesis/Kafka)**
+
+```python
+# For message-based systems (Kinesis, Kafka)
+stream = orchestrator.create_unified_stream(serialize=True)  # Default
+stream.printSchema()
+# root
+#  |-- partition_key: string (for routing/sharding)
+#  |-- data: string (JSON with all fields)
+```
+
+**Use for:** Kinesis, Kafka (message-based systems that need key/value pairs)
+
+**Example `data` column content:**
 ```json
 {
   "event_name": "user.page_view",
   "event_key": "user_1",
   "event_timestamp": "2025-10-10T12:00:00.123Z",
   "event_id": "552c2a1e-5ab5-4a0f-95d6-57a7866fb624",
-  "session_id": "e28c2df6-1b49-4bc2-be25-5515f39b721e",
   "page_url": "/home",
-  "referrer": "google",
   "user_id": 12345
 }
 ```
 
-This flat structure is compatible with Spark Structured Streaming ingest patterns using `payload:field_name` syntax.
+#### **Format 2: Wide Schema (for Delta/Parquet/JSON/CSV)**
+
+```python
+# For file/table-based systems (Delta, Parquet, JSON, CSV)
+stream = orchestrator.create_unified_stream(serialize=False)
+stream.printSchema()
+# root
+#  |-- event_name: string
+#  |-- event_id: string
+#  |-- event_timestamp: timestamp
+#  |-- user_id: string
+#  |-- page_url: string
+#  |-- amount: double
+#  |-- ... (all fields as typed columns)
+```
+
+**Use for:** Delta Lake, Parquet, JSON files, CSV (columnar/file-based systems)
+
+**Benefits:**
+- ✅ Type-safe columns (int, string, timestamp, etc.)
+- ✅ Efficient columnar storage
+- ✅ Fast queries (no JSON parsing needed)
+- ✅ NULL values handled natively
+
+---
+
+### Choosing the Right Format
+
+| Sink Type | Format | Why |
+|-----------|--------|-----|
+| **Kinesis** | `serialize=True` | Requires key/value pairs for message routing |
+| **Kafka** | `serialize=True` | Requires key/value pairs for topic partitioning |
+| **Delta Lake** | `serialize=False` | Columnar storage, ACID transactions, efficient queries |
+| **Parquet** | `serialize=False` | Columnar format, efficient compression |
+| **JSON Files** | `serialize=False` | Structured output, type preservation |
+| **CSV Files** | `serialize=False` | Tabular format |
 
 ### Step 3: Write to Kinesis
 
@@ -266,6 +310,159 @@ aws kinesis get-records \
     --shard-iterator-type LATEST \
     --query 'ShardIterator' --output text) \
   --limit 10
+```
+
+---
+
+## Writing to Other Sinks
+
+While Kinesis requires a custom DataSource, other sinks use **native Spark connectors** - just change the format and serialize parameter!
+
+### Kafka (Native Spark)
+
+```python
+# Generate serialized format for Kafka
+stream = orchestrator.create_unified_stream(serialize=True)
+
+# Kafka expects 'key' and 'value' columns (rename from partition_key and data)
+kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
+
+# Write using native Spark Kafka connector
+query = kafka_stream.writeStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("topic", "events") \
+    .option("checkpointLocation", "/tmp/kafka_checkpoint") \
+    .start()
+```
+
+**Key options:**
+- `kafka.bootstrap.servers` - Kafka broker addresses
+- `topic` - Target topic name
+- `kafka.security.protocol` - For secure connections (SASL_SSL, etc.)
+- `kafka.compression.type` - snappy, gzip, lz4, zstd
+
+[Full Kafka options →](https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html)
+
+---
+
+### Delta Lake (Native Spark)
+
+```python
+# Generate wide schema for Delta (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native Delta format
+query = stream.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .option("checkpointLocation", "/tmp/delta_checkpoint") \
+    .partitionBy("event_name") \
+    .option("mergeSchema", "true") \
+    .option("optimizeWrite", "true") \
+    .table("catalog.schema.events")
+```
+
+**Key options:**
+- `table()` - Write to Unity Catalog table
+- `.option("path", "/path")` - Or write to path
+- `partitionBy()` - Partition by event_name, date, etc.
+- `mergeSchema` - Auto-merge schema changes
+- `optimizeWrite` - Databricks optimization
+
+[Delta streaming docs →](https://docs.delta.io/latest/delta-streaming.html)
+
+---
+
+### Parquet Files (Native Spark)
+
+```python
+# Generate wide schema for Parquet (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native Parquet format
+query = stream.writeStream \
+    .format("parquet") \
+    .option("path", "/data/events/parquet") \
+    .option("checkpointLocation", "/tmp/parquet_checkpoint") \
+    .option("maxRecordsPerFile", 10000) \
+    .option("compression", "snappy") \
+    .partitionBy("event_name") \
+    .start()
+```
+
+**Key options:**
+- `maxRecordsPerFile` - Rows per output file (10K-100K recommended)
+- `compression` - snappy, gzip, lz4, zstd
+- `partitionBy()` - Partition by columns
+
+---
+
+### JSON Files (Native Spark)
+
+```python
+# Generate wide schema for JSON (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native JSON format
+query = stream.writeStream \
+    .format("json") \
+    .option("path", "/data/events/json") \
+    .option("checkpointLocation", "/tmp/json_checkpoint") \
+    .option("maxRecordsPerFile", 5000) \
+    .option("compression", "gzip") \
+    .partitionBy("event_name") \
+    .start()
+```
+
+**Key options:**
+- `maxRecordsPerFile` - Rows per output file
+- `compression` - gzip, bzip2, lz4, snappy
+- Output is line-delimited JSON (one JSON object per line)
+
+---
+
+### Common Mistakes to Avoid
+
+#### ❌ **Mistake 1: Using serialized format for Delta/Parquet**
+
+```python
+# DON'T DO THIS
+stream = orchestrator.create_unified_stream(serialize=True)  # Wrong!
+stream.writeStream.format("delta").table("events")
+
+# Result: Delta table only has 2 columns (partition_key, data)
+# You lose all columnar storage benefits and query performance!
+```
+
+**✅ Correct:**
+```python
+stream = orchestrator.create_unified_stream(serialize=False)  # Right!
+stream.writeStream.format("delta").table("events")
+
+# Result: Delta table has all columns with proper types
+# Efficient storage, fast queries, schema evolution support
+```
+
+---
+
+#### ❌ **Mistake 2: Using wide schema for Kafka**
+
+```python
+# DON'T DO THIS
+stream = orchestrator.create_unified_stream(serialize=False)  # Wrong!
+stream.writeStream.format("kafka").option("topic", "events").start()
+
+# Result: Error! Kafka expects 'key' and 'value' columns
+```
+
+**✅ Correct:**
+```python
+stream = orchestrator.create_unified_stream(serialize=True)  # Right!
+kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
+kafka_stream.writeStream.format("kafka").option("topic", "events").start()
+
+# Result: Works! Kafka gets proper key/value pairs
 ```
 
 ---
