@@ -38,19 +38,40 @@
 
 ### Building from Source
 
-To build the wheel distribution:
+The project uses **Hatch** for full lifecycle management (build, test, version, publish):
 
 ```bash
-# Install build tool
-pip install build
+# Install hatch (one-time)
+pipx install hatch
 
 # Build wheel
-python -m build
+hatch build
 
-# Output: dist/dblstreamgen-0.1.0-py3-none-any.whl
+# Or use traditional approach
+pip install build
+python -m build
 ```
 
-For detailed build instructions, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
+**Quick commands:**
+
+```bash
+# Using Hatch
+hatch run test          # Run tests
+hatch run lint          # Lint code
+hatch version patch     # Bump version
+hatch build             # Build wheel
+hatch publish           # Publish to PyPI
+
+# Using Makefile (convenience wrapper)
+make help               # Show all commands
+make test-cov           # Run tests with coverage
+make build              # Build wheel
+make release-patch      # Full release workflow
+```
+
+**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
+
+For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
 
 ### Databricks
 

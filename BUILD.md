@@ -2,49 +2,95 @@
 
 This guide explains how to build a wheel distribution of `dblstreamgen` for installation and distribution.
 
-## Prerequisites
+## Tool Options
 
-The project uses `hatchling` as the build backend (configured in `pyproject.toml`). You'll need the `build` package:
+The project uses `hatchling` as the build backend. You have several options for managing the full wheel lifecycle:
+
+### Option 1: Hatch (Recommended - Already Using Hatchling)
+
+Since you're using `hatchling` as the build backend, **Hatch** is the natural choice for full lifecycle management:
 
 ```bash
-# Option 1: Using a virtual environment (recommended)
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install build
+# Install hatch (one-time setup)
+pipx install hatch  # Or: brew install hatch
 
-# Option 2: Using pipx (for system-wide tool)
-pipx install build
+# No need for virtual environments - Hatch manages them automatically!
 ```
+
+**Advantages:**
+- ✅ Zero configuration needed (already set up in `pyproject.toml`)
+- ✅ Automatic virtual environment management
+- ✅ Built-in version bumping
+- ✅ Environment matrix for testing
+- ✅ Integrated build and publish commands
+
+### Option 2: Poetry
+
+Popular alternative with dependency locking:
+
+```bash
+pipx install poetry
+```
+
+**Note:** Would require converting `pyproject.toml` to Poetry format.
+
+### Option 3: PDM
+
+Modern tool with PEP 582 support:
+
+```bash
+pipx install pdm
+```
+
+**Note:** Would require minimal `pyproject.toml` changes.
+
+### Option 4: Traditional Build + Twine
+
+Manual approach without full lifecycle management:
+
+```bash
+pip install build twine
+```
+
+**Use when:** You want maximum control and minimal tooling.
 
 ## Building the Wheel
 
-### Quick Build
+### Using Hatch (Recommended)
 
-From the project root directory:
+Hatch provides the simplest workflow since you're already using `hatchling`:
 
 ```bash
-python -m build
+# Build both wheel and sdist
+hatch build
+
+# Build wheel only (faster)
+hatch build --target wheel
+
+# Clean and build
+hatch clean && hatch build
 ```
 
-This will create two files in the `dist/` directory:
-- `dblstreamgen-0.1.0-py3-none-any.whl` (wheel)
-- `dblstreamgen-0.1.0.tar.gz` (source distribution)
+**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
 
-### Build Wheel Only
+### Using python -m build (Traditional)
 
-To build only the wheel (faster):
+Standard approach using the `build` module:
 
 ```bash
+# Install build tool first
+pip install build
+
+# Build both formats
+python -m build
+
+# Build wheel only
 python -m build --wheel
 ```
 
-### Build with Hatch (Alternative)
-
-If you have `hatch` installed:
-
-```bash
-hatch build
-```
+This creates:
+- `dblstreamgen-0.1.0-py3-none-any.whl` (wheel)
+- `dblstreamgen-0.1.0.tar.gz` (source distribution)
 
 ## What's Included in the Wheel
 
@@ -202,9 +248,94 @@ twine upload dist/*
   password = pypi-AgEIcHlwaS5vcmc...  # Your API token
 ```
 
-## Versioning
+## Full Lifecycle Management with Hatch
 
-Update version in `pyproject.toml`:
+### Complete Workflow
+
+```bash
+# 1. Install hatch (one-time)
+pipx install hatch
+
+# 2. Run tests in isolated environment
+hatch run pytest
+
+# 3. Bump version (automatically updates pyproject.toml)
+hatch version patch    # 0.1.0 -> 0.1.1
+hatch version minor    # 0.1.1 -> 0.2.0
+hatch version major    # 0.2.0 -> 1.0.0
+
+# 4. Build wheel
+hatch build
+
+# 5. Publish to PyPI
+hatch publish
+
+# 6. Publish to Test PyPI first (recommended)
+hatch publish -r test
+```
+
+### Development with Hatch
+
+```bash
+# Create and enter a development environment
+hatch shell
+
+# Run commands in the environment (without entering it)
+hatch run python -c "from dblstreamgen import __version__; print(__version__)"
+
+# Run linters
+hatch run ruff check src/
+hatch run mypy src/
+
+# Run tests with coverage
+hatch run pytest --cov
+
+# Format code
+hatch run ruff format src/
+```
+
+### Environment Management
+
+Hatch automatically manages virtual environments. No need to create/activate venvs!
+
+```bash
+# Show all environments
+hatch env show
+
+# Remove all environments (clean slate)
+hatch env prune
+
+# Run in specific Python version
+hatch run python:3.11 pytest
+```
+
+### Versioning
+
+#### Automatic Version Bumping
+
+```bash
+# Check current version
+hatch version
+
+# Bump patch (0.1.0 -> 0.1.1)
+hatch version patch
+
+# Bump minor (0.1.0 -> 0.2.0)
+hatch version minor
+
+# Bump major (0.1.0 -> 1.0.0)
+hatch version major
+
+# Set specific version
+hatch version 1.2.3
+
+# Preview what would change (dry-run)
+hatch version minor --dry-run
+```
+
+#### Manual Version Update
+
+Edit `pyproject.toml`:
 
 ```toml
 [project]
@@ -214,18 +345,154 @@ version = "0.2.0"  # Update this
 Then rebuild:
 
 ```bash
-# Clean old builds
-rm -rf dist/ build/ src/*.egg-info/
+hatch clean && hatch build
+```
 
-# Build new version
-python -m build
+## Advanced Hatch Configuration
+
+### Define Test Environments
+
+Add to `pyproject.toml`:
+
+```toml
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.1.0",
+  "mypy>=1.0",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov-report=term-missing --cov-config=pyproject.toml --cov=src/dblstreamgen {args:tests}"
+lint = "ruff check {args:src tests}"
+format = "ruff format {args:src tests}"
+type-check = "mypy {args:src}"
+
+# Matrix testing across Python versions
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12"]
+```
+
+**Usage:**
+
+```bash
+# Run tests
+hatch run test
+
+# Run tests with coverage
+hatch run test-cov
+
+# Lint code
+hatch run lint
+
+# Format code
+hatch run format
+
+# Type check
+hatch run type-check
+
+# Test on all Python versions
+hatch run test:test
+```
+
+### Configure PyPI Repositories
+
+Add to `pyproject.toml`:
+
+```toml
+[tool.hatch.publish.index]
+repos = { test = "https://test.pypi.org/legacy/" }
+```
+
+Create `~/.pypirc` for authentication:
+
+```ini
+[distutils]
+index-servers =
+    pypi
+    test
+
+[pypi]
+username = __token__
+password = pypi-AgEI...  # Your PyPI API token
+
+[test]
+repository = https://test.pypi.org/legacy/
+username = __token__
+password = pypi-AgEI...  # Your Test PyPI API token
 ```
 
 ## CI/CD Integration
 
-### GitHub Actions Example
+### GitHub Actions with Hatch
 
 Create `.github/workflows/build.yml`:
+
+```yaml
+name: Build and Publish
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install Hatch
+        run: pipx install hatch
+      
+      - name: Run tests
+        run: hatch run test-cov
+      
+      - name: Run linters
+        run: hatch run lint
+      
+      - name: Type check
+        run: hatch run type-check
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Hatch
+        run: pipx install hatch
+      
+      - name: Build package
+        run: hatch build
+      
+      - name: Publish to PyPI
+        run: hatch publish
+        env:
+          HATCH_INDEX_USER: __token__
+          HATCH_INDEX_AUTH: ${{ secrets.PYPI_API_TOKEN }}
+```
+
+### GitHub Actions (Traditional)
+
+Using `build` and `twine`:
 
 ```yaml
 name: Build and Publish
@@ -238,14 +505,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install build
-        run: pip install build
+      
+      - name: Install build tools
+        run: pip install build twine
+      
       - name: Build wheel
         run: python -m build
+      
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -300,14 +570,134 @@ Ensure all dependencies are listed in `pyproject.toml` under `dependencies` or `
    - MINOR: New features (backward compatible)
    - PATCH: Bug fixes
 
+## Tool Comparison
+
+| Feature | Hatch | Poetry | PDM | Build+Twine |
+|---------|-------|--------|-----|-------------|
+| **Already configured** | ✅ Yes | ❌ No | ❌ No | ⚠️ Partial |
+| **Version bumping** | ✅ Built-in | ✅ Built-in | ✅ Built-in | ❌ Manual |
+| **Environment mgmt** | ✅ Automatic | ✅ Automatic | ✅ Automatic | ❌ Manual |
+| **Dependency locking** | ❌ No | ✅ Yes | ✅ Yes | ❌ No |
+| **Build speed** | ⚡ Fast | ⚡ Fast | ⚡ Fast | ⚡ Fast |
+| **Publishing** | ✅ `hatch publish` | ✅ `poetry publish` | ✅ `pdm publish` | ✅ `twine upload` |
+| **Test matrix** | ✅ Yes | ⚠️ Via tox | ⚠️ Via tox | ❌ Manual |
+| **Learning curve** | 🟢 Low | 🟡 Medium | 🟡 Medium | 🟢 Low |
+| **Configuration** | 📝 pyproject.toml | 📝 pyproject.toml | 📝 pyproject.toml | 📝 pyproject.toml |
+
+**Recommendation for this project:** Use **Hatch** - it's already configured and requires zero changes.
+
 ## Quick Reference
 
+### Hatch Workflow (Recommended)
+
 ```bash
-# Full build and publish workflow
+# One-time setup
+pipx install hatch
+
+# Development
+hatch shell                  # Enter dev environment
+hatch run test               # Run tests
+hatch run lint               # Lint code
+
+# Version bump
+hatch version patch          # 0.1.0 -> 0.1.1
+
+# Build and publish
+hatch clean                  # Clean old builds
+hatch build                  # Build wheel
+hatch publish -r test        # Publish to Test PyPI
+hatch publish                # Publish to PyPI
+
+# All-in-one release
+hatch version minor && hatch clean && hatch build && hatch publish
+```
+
+### Traditional Workflow
+
+```bash
+# Setup
+pip install build twine
+
+# Build
 rm -rf dist/ build/
 python -m build
+
+# Validate
 twine check dist/*
-pip install dist/*.whl  # Test locally
+
+# Test locally
+pip install dist/*.whl
+
+# Publish
 twine upload --repository testpypi dist/*  # Test PyPI
-twine upload dist/*  # Production (when ready)
+twine upload dist/*                         # Production PyPI
+```
+
+### Poetry Workflow (If Migrating)
+
+```bash
+# Setup
+pipx install poetry
+poetry init  # Convert project
+
+# Development
+poetry install
+poetry shell
+
+# Version bump
+poetry version patch
+
+# Build and publish
+poetry build
+poetry publish --repository testpypi
+poetry publish
+```
+
+### PDM Workflow (If Migrating)
+
+```bash
+# Setup
+pipx install pdm
+pdm init  # Convert project
+
+# Development
+pdm install
+pdm run python
+
+# Version bump
+pdm bump patch
+
+# Build and publish
+pdm build
+pdm publish --repository testpypi
+pdm publish
+```
+
+### Makefile Shortcuts (Included)
+
+A `Makefile` is included for convenience:
+
+```bash
+make help           # Show all available commands
+make install        # Install hatch
+make test           # Run tests
+make test-cov       # Run tests with coverage
+make lint           # Run linter
+make format         # Format code
+make clean          # Clean build artifacts
+make build          # Build wheel
+make version-patch  # Bump patch version
+make publish-test   # Publish to Test PyPI
+make publish        # Publish to PyPI
+make release-patch  # Full release workflow (test, bump, build, publish)
+```
+
+**Example full release:**
+
+```bash
+# Run all checks, bump version, build, and publish to Test PyPI
+make release-patch
+
+# After testing, publish to production
+make publish
 ```
