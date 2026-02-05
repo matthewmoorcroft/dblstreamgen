@@ -483,13 +483,85 @@ event_types:
 
 ### Field Types
 
+dblstreamgen supports **13 data types** including simple primitives and complex nested structures:
+
+#### Simple Types
+
+| Type | Configuration | Example | Use Case |
+|------|--------------|---------|----------|
+| `uuid` | None | `event_id: {type: "uuid"}` | Unique identifiers |
+| `string` | `values: [...]`, `weights: [...]` | `device: {type: "string", values: ["iOS", "Android"]}` | Categories, enums |
+| `int` | `range: [min, max]` | `quantity: {type: "int", range: [1, 100]}` | Counts, small IDs |
+| `long` | `range: [min, max]` | `transaction_id: {type: "long", range: [1000000000, 9999999999]}` | Large IDs |
+| `short` | `range: [min, max]` | `port: {type: "short", range: [1024, 65535]}` | Small integers |
+| `byte` | `range: [min, max]` | `status: {type: "byte", range: [0, 100]}` | Tiny integers |
+| `float` | `range: [min, max]` | `temperature: {type: "float", range: [-40.0, 85.0]}` | Measurements |
+| `double` | `range: [min, max]` | `latitude: {type: "double", range: [-90.0, 90.0]}` | High precision |
+| `decimal` | `precision, scale, range` | `price: {type: "decimal", precision: 10, scale: 2, range: [0.01, 999.99]}` | Money |
+| `boolean` | `values: [...]`, `weights: [...]` | `is_active: {type: "boolean", values: [true, false], weights: [0.8, 0.2]}` | Flags |
+| `timestamp` | `begin, end` (optional) | `event_time: {type: "timestamp", begin: "2024-01-01 00:00:00", end: "2024-12-31 23:59:59"}` | Date/time |
+| `date` | `begin, end` | `birth_date: {type: "date", begin: "1950-01-01", end: "2005-12-31"}` | Dates only |
+| `binary` | None | `raw_data: {type: "binary"}` | Binary data |
+
+#### Complex/Nested Types
+
 | Type | Configuration | Example |
 |------|--------------|---------|
-| `uuid` | None | `event_id: {type: "uuid"}` |
-| `int` | `range: [min, max]` | `user_id: {type: "int", range: [1, 1000000]}` |
-| `float` | `range: [min, max]` | `amount: {type: "float", range: [10.0, 500.0]}` |
-| `string` | `values: [...]` or `values: [...], weights: [...]` | `page_url: {type: "string", values: ["/home", "/products"]}` |
-| `timestamp` | None (uses current time) | `event_timestamp: {type: "timestamp"}` |
+| `array` | `item_type, values, num_features` | `tags: {type: "array", item_type: "string", values: ["urgent", "normal"], num_features: [1, 5]}` |
+| `struct` | `fields: {...}` | `address: {type: "struct", fields: {city: {type: "string"}, zip: {type: "int"}}}` |
+| `map` | `key_type, value_type, values` | `metadata: {type: "map", key_type: "string", value_type: "string", values: [{...}]}` |
+
+**See [TYPE_SYSTEM.md](docs/TYPE_SYSTEM.md) for complete type reference with examples.**
+
+#### Quick Type Examples
+
+```yaml
+# Boolean with probability
+is_premium:
+  type: boolean
+  values: [true, false]
+  weights: [0.15, 0.85]  # 15% premium
+
+# Long for large IDs
+account_id:
+  type: long
+  range: [1000000000, 9999999999]
+
+# Double for coordinates
+latitude:
+  type: double
+  range: [-90.0, 90.0]
+
+# Date with range
+registration_date:
+  type: date
+  begin: "2020-01-01"
+  end: "2024-12-31"
+
+# Array of strings
+tags:
+  type: array
+  item_type: string
+  values: ["urgent", "normal", "low"]
+  num_features: [1, 4]  # 1-4 tags
+
+# Nested struct
+address:
+  type: struct
+  fields:
+    street: {type: string, values: ["123 Main St"]}
+    city: {type: string, values: ["NYC", "LA"]}
+    zip: {type: int, range: [10000, 99999]}
+
+# Map
+metadata:
+  type: map
+  key_type: string
+  value_type: string
+  values:
+    - {"env": "prod", "region": "us-east"}
+    - {"env": "dev", "region": "us-west"}
+```
 
 ### Common Fields
 
@@ -674,9 +746,19 @@ sink_config:
 
 ## Documentation
 
-- **Example Config**: `sample/configs/simple_config.yaml`
-- **Stress Test Config**: `sample/configs/1500_events_config.yaml`
-- **Example Notebook**: `sample/notebooks/01_simple_example.py`
+### Configuration Examples
+- **Basic Example**: `sample/configs/simple_config.yaml` - Simple types, web analytics pattern
+- **Extended Types**: `sample/configs/extended_types_config.yaml` - All simple types (boolean, long, double, date, etc.)
+- **Nested Types**: `sample/configs/nested_types_config.yaml` - Complex types (array, struct, map)
+- **Stress Test**: `sample/configs/1500_events_config.yaml` - 1500+ event types at scale
+
+### Notebooks
+- **Quick Start**: `sample/notebooks/01_simple_example.py` - End-to-end Kinesis + Delta examples
+
+### Type System
+- **Complete Type Reference**: `docs/TYPE_SYSTEM.md` - All 13 supported types with examples
+- **Simple Types**: uuid, string, int, long, short, byte, float, double, decimal, boolean, timestamp, date, binary
+- **Complex Types**: array, struct, map (with nesting support)
 
 
 ---

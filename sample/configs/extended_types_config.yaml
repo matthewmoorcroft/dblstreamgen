@@ -1,0 +1,153 @@
+# dblstreamgen Extended Types Configuration Example
+#
+# This configuration showcases all simple data types including:
+# - boolean, long, double, date, decimal, byte, short, binary
+# - Enhanced timestamp with date ranges
+#
+# Use this as a reference for the extended type system
+
+# ============================================================================
+# MAIN CONFIGURATION
+# ============================================================================
+
+generation_mode: "streaming"
+
+streaming_config:
+  total_rows_per_second: 500
+
+sink_config:
+  type: "delta"
+  table_name: "catalog.schema.extended_types_demo"
+  partition_key_field: "event_name"
+
+# ============================================================================
+# SCHEMA CONFIGURATION - Extended Types
+# ============================================================================
+
+common_fields:
+  # Standard types
+  event_name:
+    type: "string"
+  
+  event_id:
+    type: "uuid"
+  
+  # Boolean type - true/false with weights
+  is_active:
+    type: "boolean"
+    values: [true, false]
+    weights: [0.8, 0.2]  # 80% active, 20% inactive
+  
+  # Long type - large integers
+  transaction_id:
+    type: "long"
+    range: [1000000000, 9999999999]
+  
+  # Double type - high precision decimals
+  latitude:
+    type: "double"
+    range: [-90.0, 90.0]
+  
+  longitude:
+    type: "double"
+    range: [-180.0, 180.0]
+  
+  # Date type - dates without time
+  registration_date:
+    type: "date"
+    begin: "2020-01-01"
+    end: "2024-12-31"
+  
+  # Timestamp with range - events within specific time window
+  event_timestamp:
+    type: "timestamp"
+    begin: "2024-01-01 00:00:00"
+    end: "2024-12-31 23:59:59"
+
+# Event types demonstrating various numeric types
+event_types:
+  # E-commerce transaction event
+  - event_type_id: "ecommerce.transaction"
+    weight: 0.40
+    fields:
+      # Decimal type - monetary values with precision
+      amount:
+        type: "decimal"
+        precision: 10
+        scale: 2
+        range: [1.00, 999.99]
+      
+      tax_amount:
+        type: "decimal"
+        precision: 8
+        scale: 2
+        range: [0.00, 99.99]
+      
+      # Double type - exchange rate
+      exchange_rate:
+        type: "double"
+        range: [0.5, 2.0]
+      
+      # Short type - small integers
+      item_count:
+        type: "short"
+        range: [1, 100]
+      
+      # Boolean - payment success
+      payment_success:
+        type: "boolean"
+        values: [true, false]
+        weights: [0.95, 0.05]  # 95% success rate
+  
+  # IoT sensor event
+  - event_type_id: "iot.sensor_reading"
+    weight: 0.35
+    fields:
+      # Double - temperature with high precision
+      temperature:
+        type: "double"
+        range: [-40.0, 85.0]
+      
+      humidity:
+        type: "double"
+        range: [0.0, 100.0]
+      
+      # Float - lower precision measurement
+      battery_voltage:
+        type: "float"
+        range: [3.0, 4.2]
+      
+      # Byte - status code
+      status_code:
+        type: "byte"
+        range: [0, 127]
+      
+      # Binary - raw sensor data
+      raw_data:
+        type: "binary"
+  
+  # User activity event
+  - event_type_id: "user.activity"
+    weight: 0.25
+    fields:
+      # Long - user ID with large range
+      user_id:
+        type: "long"
+        range: [1000000, 999999999]
+      
+      # Int - session duration in seconds
+      session_duration:
+        type: "int"
+        range: [1, 7200]
+      
+      # Date - last login date
+      last_login_date:
+        type: "date"
+        begin: "2024-01-01"
+        end: "2024-12-31"
+      
+      # Boolean - premium user
+      is_premium:
+        type: "boolean"
+        values: [true, false]
+        weights: [0.15, 0.85]  # 15% premium users

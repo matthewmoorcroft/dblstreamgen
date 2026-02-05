@@ -83,7 +83,11 @@ class Config:
     
     def _validate_field_types(self):
         """Validate all field types are supported."""
-        supported_types = {'uuid', 'int', 'float', 'string', 'timestamp'}
+        supported_types = {
+            'uuid', 'int', 'float', 'string', 'timestamp',
+            'boolean', 'long', 'double', 'date', 'decimal',
+            'byte', 'short', 'binary', 'array', 'struct', 'map'
+        }
         
         # Check common fields
         for field_name, field_spec in self.data.get('common_fields', {}).items():
@@ -105,35 +109,94 @@ class Config:
                         f"Supported types: {supported_types}"
                     )
     
+    def _compare_field_specs(self, spec1: dict, spec2: dict, field_name: str, loc1: str, loc2: str):
+        """
+        Compare two field specs for consistency (handles nested types).
+        
+        Raises ConfigurationError if specs are incompatible.
+        """
+        type1 = spec1.get('type')
+        type2 = spec2.get('type')
+        
+        # Types must match
+        if type1 != type2:
+            raise ConfigurationError(
+                f"Field '{field_name}' has inconsistent types: {loc1} uses '{type1}' "
+                f"but {loc2} uses '{type2}'. Use different field names or standardize on one type."
+            )
+        
+        # For arrays, check item_type consistency
+        if type1 == 'array':
+            item_type1 = spec1.get('item_type', 'string')
+            item_type2 = spec2.get('item_type', 'string')
+            if item_type1 != item_type2:
+                raise ConfigurationError(
+                    f"Array field '{field_name}' has inconsistent item types: "
+                    f"{loc1} uses '{item_type1}' but {loc2} uses '{item_type2}'"
+                )
+        
+        # For maps, check key_type and value_type consistency
+        if type1 == 'map':
+            key_type1 = spec1.get('key_type', 'string')
+            key_type2 = spec2.get('key_type', 'string')
+            value_type1 = spec1.get('value_type', 'string')
+            value_type2 = spec2.get('value_type', 'string')
+            
+            if key_type1 != key_type2 or value_type1 != value_type2:
+                raise ConfigurationError(
+                    f"Map field '{field_name}' has inconsistent types: "
+                    f"{loc1} uses map<{key_type1},{value_type1}> but {loc2} uses map<{key_type2},{value_type2}>"
+                )
+        
+        # For structs, recursively check nested fields
+        if type1 == 'struct':
+            fields1 = spec1.get('fields', {})
+            fields2 = spec2.get('fields', {})
+            
+            # Check that field names match
+            keys1 = set(fields1.keys())
+            keys2 = set(fields2.keys())
+            
+            if keys1 != keys2:
+                missing_in_2 = keys1 - keys2
+                missing_in_1 = keys2 - keys1
+                msg = f"Struct field '{field_name}' has inconsistent nested fields: "
+                if missing_in_2:
+                    msg += f"{loc2} missing fields {missing_in_2}. "
+                if missing_in_1:
+                    msg += f"{loc1} missing fields {missing_in_1}."
+                raise ConfigurationError(msg)
+            
+            # Recursively check each nested field
+            for nested_field_name in keys1:
+                self._compare_field_specs(
+                    fields1[nested_field_name],
+                    fields2[nested_field_name],
+                    f"{field_name}.{nested_field_name}",
+                    loc1,
+                    loc2
+                )
+    
     def _validate_field_type_consistency(self):
         """Validate fields with the same name have consistent types (required for wide schema)."""
-        # Build field type registry: field_name -> (type, event_type_id)
+        # Build field type registry: field_name -> (spec, event_type_id)
         field_registry = {}
         
         # Check common fields first (these set the baseline)
         for field_name, field_spec in self.data.get('common_fields', {}).items():
-            field_type = field_spec.get('type')
-            field_registry[field_name] = (field_type, 'common_fields')
+            field_registry[field_name] = (field_spec, 'common_fields')
         
         # Check event-specific fields
         for event_type in self.data['event_types']:
             event_id = event_type['event_type_id']
             
             for field_name, field_spec in event_type.get('fields', {}).items():
-                field_type = field_spec.get('type')
-                
                 if field_name in field_registry:
-                    # Check consistency
-                    existing_type, existing_location = field_registry[field_name]
-                    
-                    if existing_type != field_type:
-                        raise ConfigurationError(
-                            f"Field '{field_name}' has inconsistent types: {existing_location} uses '{existing_type}' "
-                            f"but {event_id} uses '{field_type}'. Use different field names (e.g., '{field_name}_{existing_type}' "
-                            f"and '{field_name}_{field_type}') or standardize on one type."
-                        )
+                    # Check consistency (including nested type details)
+                    existing_spec, existing_location = field_registry[field_name]
+                    self._compare_field_specs(existing_spec, field_spec, field_name, existing_location, event_id)
                 else:
-                    field_registry[field_name] = (field_type, event_id)
+                    field_registry[field_name] = (field_spec, event_id)
     
     def get(self, key: str, default: Any = None) -> Any:
         """
