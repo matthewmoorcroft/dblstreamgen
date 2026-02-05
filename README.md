@@ -36,6 +36,22 @@
 
 ## Installation
 
+### Building from Source
+
+To build the wheel distribution:
+
+```bash
+# Install build tool
+pip install build
+
+# Build wheel
+python -m build
+
+# Output: dist/dblstreamgen-0.1.0-py3-none-any.whl
+```
+
+For detailed build instructions, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
+
 ### Databricks
 
 #### Step 1: Upload Wheel to Unity Catalog Volume
