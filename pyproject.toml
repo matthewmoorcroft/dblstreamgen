@@ -72,6 +72,46 @@ Issues = "https://github.com/databrickslabs/dblstreamgen/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/dblstreamgen"]
 
+# Hatch version configuration
+[tool.hatch.version]
+path = "src/dblstreamgen/__init__.py"
+
+# Hatch environment configuration
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "types-PyYAML",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov-report=term-missing --cov-config=pyproject.toml --cov=src/dblstreamgen --cov-report=html {args:tests}"
+lint = "ruff check {args:src tests}"
+lint-fix = "ruff check --fix {args:src tests}"
+format = "ruff format {args:src tests}"
+format-check = "ruff format --check {args:src tests}"
+type-check = "mypy {args:src}"
+all = [
+    "format",
+    "lint-fix",
+    "type-check",
+    "test-cov",
+]
+
+# Test matrix for multiple Python versions
+[tool.hatch.envs.test]
+template = "default"
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12"]
+
+# PyPI repository configuration
+[tool.hatch.publish.index]
+repos = { test = "https://test.pypi.org/legacy/" }
+
 # Ruff configuration
 [tool.ruff]
 target-version = "py39"

@@ -36,6 +36,43 @@
 
 ## Installation
 
+### Building from Source
+
+The project uses **Hatch** for full lifecycle management (build, test, version, publish):
+
+```bash
+# Install hatch (one-time)
+pipx install hatch
+
+# Build wheel
+hatch build
+
+# Or use traditional approach
+pip install build
+python -m build
+```
+
+**Quick commands:**
+
+```bash
+# Using Hatch
+hatch run test          # Run tests
+hatch run lint          # Lint code
+hatch version patch     # Bump version
+hatch build             # Build wheel
+hatch publish           # Publish to PyPI
+
+# Using Makefile (convenience wrapper)
+make help               # Show all commands
+make test-cov           # Run tests with coverage
+make build              # Build wheel
+make release-patch      # Full release workflow
+```
+
+**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
+
+For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
+
 ### Databricks
 
 #### Step 1: Upload Wheel to Unity Catalog Volume
@@ -194,27 +231,71 @@ unified_stream.printSchema()
 display(unified_stream)
 ```
 
-### Understanding the Output
+### Understanding Output Formats
 
-The library generates a DataFrame with two columns:
-- **partition_key**: Used for Kinesis sharding (based on `partition_key_field` in config)
-- **data**: Flat JSON string containing ALL event fields
+The library can generate data in **two formats** depending on your sink type:
 
-Example `data` field content:
+#### **Format 1: Serialized (for Kinesis/Kafka)**
+
+```python
+# For message-based systems (Kinesis, Kafka)
+stream = orchestrator.create_unified_stream(serialize=True)  # Default
+stream.printSchema()
+# root
+#  |-- partition_key: string (for routing/sharding)
+#  |-- data: string (JSON with all fields)
+```
+
+**Use for:** Kinesis, Kafka (message-based systems that need key/value pairs)
+
+**Example `data` column content:**
 ```json
 {
   "event_name": "user.page_view",
   "event_key": "user_1",
   "event_timestamp": "2025-10-10T12:00:00.123Z",
   "event_id": "552c2a1e-5ab5-4a0f-95d6-57a7866fb624",
-  "session_id": "e28c2df6-1b49-4bc2-be25-5515f39b721e",
   "page_url": "/home",
-  "referrer": "google",
   "user_id": 12345
 }
 ```
 
-This flat structure is compatible with Spark Structured Streaming ingest patterns using `payload:field_name` syntax.
+#### **Format 2: Wide Schema (for Delta/Parquet/JSON/CSV)**
+
+```python
+# For file/table-based systems (Delta, Parquet, JSON, CSV)
+stream = orchestrator.create_unified_stream(serialize=False)
+stream.printSchema()
+# root
+#  |-- event_name: string
+#  |-- event_id: string
+#  |-- event_timestamp: timestamp
+#  |-- user_id: string
+#  |-- page_url: string
+#  |-- amount: double
+#  |-- ... (all fields as typed columns)
+```
+
+**Use for:** Delta Lake, Parquet, JSON files, CSV (columnar/file-based systems)
+
+**Benefits:**
+- ✅ Type-safe columns (int, string, timestamp, etc.)
+- ✅ Efficient columnar storage
+- ✅ Fast queries (no JSON parsing needed)
+- ✅ NULL values handled natively
+
+---
+
+### Choosing the Right Format
+
+| Sink Type | Format | Why |
+|-----------|--------|-----|
+| **Kinesis** | `serialize=True` | Requires key/value pairs for message routing |
+| **Kafka** | `serialize=True` | Requires key/value pairs for topic partitioning |
+| **Delta Lake** | `serialize=False` | Columnar storage, ACID transactions, efficient queries |
+| **Parquet** | `serialize=False` | Columnar format, efficient compression |
+| **JSON Files** | `serialize=False` | Structured output, type preservation |
+| **CSV Files** | `serialize=False` | Tabular format |
 
 ### Step 3: Write to Kinesis
 
@@ -270,6 +351,159 @@ aws kinesis get-records \
 
 ---
 
+## Writing to Other Sinks
+
+While Kinesis requires a custom DataSource, other sinks use **native Spark connectors** - just change the format and serialize parameter!
+
+### Kafka (Native Spark)
+
+```python
+# Generate serialized format for Kafka
+stream = orchestrator.create_unified_stream(serialize=True)
+
+# Kafka expects 'key' and 'value' columns (rename from partition_key and data)
+kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
+
+# Write using native Spark Kafka connector
+query = kafka_stream.writeStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("topic", "events") \
+    .option("checkpointLocation", "/tmp/kafka_checkpoint") \
+    .start()
+```
+
+**Key options:**
+- `kafka.bootstrap.servers` - Kafka broker addresses
+- `topic` - Target topic name
+- `kafka.security.protocol` - For secure connections (SASL_SSL, etc.)
+- `kafka.compression.type` - snappy, gzip, lz4, zstd
+
+[Full Kafka options →](https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html)
+
+---
+
+### Delta Lake (Native Spark)
+
+```python
+# Generate wide schema for Delta (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native Delta format
+query = stream.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .option("checkpointLocation", "/tmp/delta_checkpoint") \
+    .partitionBy("event_name") \
+    .option("mergeSchema", "true") \
+    .option("optimizeWrite", "true") \
+    .table("catalog.schema.events")
+```
+
+**Key options:**
+- `table()` - Write to Unity Catalog table
+- `.option("path", "/path")` - Or write to path
+- `partitionBy()` - Partition by event_name, date, etc.
+- `mergeSchema` - Auto-merge schema changes
+- `optimizeWrite` - Databricks optimization
+
+[Delta streaming docs →](https://docs.delta.io/latest/delta-streaming.html)
+
+---
+
+### Parquet Files (Native Spark)
+
+```python
+# Generate wide schema for Parquet (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native Parquet format
+query = stream.writeStream \
+    .format("parquet") \
+    .option("path", "/data/events/parquet") \
+    .option("checkpointLocation", "/tmp/parquet_checkpoint") \
+    .option("maxRecordsPerFile", 10000) \
+    .option("compression", "snappy") \
+    .partitionBy("event_name") \
+    .start()
+```
+
+**Key options:**
+- `maxRecordsPerFile` - Rows per output file (10K-100K recommended)
+- `compression` - snappy, gzip, lz4, zstd
+- `partitionBy()` - Partition by columns
+
+---
+
+### JSON Files (Native Spark)
+
+```python
+# Generate wide schema for JSON (NOT serialized)
+stream = orchestrator.create_unified_stream(serialize=False)
+
+# Write using native JSON format
+query = stream.writeStream \
+    .format("json") \
+    .option("path", "/data/events/json") \
+    .option("checkpointLocation", "/tmp/json_checkpoint") \
+    .option("maxRecordsPerFile", 5000) \
+    .option("compression", "gzip") \
+    .partitionBy("event_name") \
+    .start()
+```
+
+**Key options:**
+- `maxRecordsPerFile` - Rows per output file
+- `compression` - gzip, bzip2, lz4, snappy
+- Output is line-delimited JSON (one JSON object per line)
+
+---
+
+### Common Mistakes to Avoid
+
+#### ❌ **Mistake 1: Using serialized format for Delta/Parquet**
+
+```python
+# DON'T DO THIS
+stream = orchestrator.create_unified_stream(serialize=True)  # Wrong!
+stream.writeStream.format("delta").table("events")
+
+# Result: Delta table only has 2 columns (partition_key, data)
+# You lose all columnar storage benefits and query performance!
+```
+
+**✅ Correct:**
+```python
+stream = orchestrator.create_unified_stream(serialize=False)  # Right!
+stream.writeStream.format("delta").table("events")
+
+# Result: Delta table has all columns with proper types
+# Efficient storage, fast queries, schema evolution support
+```
+
+---
+
+#### ❌ **Mistake 2: Using wide schema for Kafka**
+
+```python
+# DON'T DO THIS
+stream = orchestrator.create_unified_stream(serialize=False)  # Wrong!
+stream.writeStream.format("kafka").option("topic", "events").start()
+
+# Result: Error! Kafka expects 'key' and 'value' columns
+```
+
+**✅ Correct:**
+```python
+stream = orchestrator.create_unified_stream(serialize=True)  # Right!
+kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
+kafka_stream.writeStream.format("kafka").option("topic", "events").start()
+
+# Result: Works! Kafka gets proper key/value pairs
+```
+
+---
+
 ## Configuration Guide
 
 ### Event Type Structure
@@ -286,13 +520,85 @@ event_types:
 
 ### Field Types
 
+dblstreamgen supports **13 data types** including simple primitives and complex nested structures:
+
+#### Simple Types
+
+| Type | Configuration | Example | Use Case |
+|------|--------------|---------|----------|
+| `uuid` | None | `event_id: {type: "uuid"}` | Unique identifiers |
+| `string` | `values: [...]`, `weights: [...]` | `device: {type: "string", values: ["iOS", "Android"]}` | Categories, enums |
+| `int` | `range: [min, max]` | `quantity: {type: "int", range: [1, 100]}` | Counts, small IDs |
+| `long` | `range: [min, max]` | `transaction_id: {type: "long", range: [1000000000, 9999999999]}` | Large IDs |
+| `short` | `range: [min, max]` | `port: {type: "short", range: [1024, 65535]}` | Small integers |
+| `byte` | `range: [min, max]` | `status: {type: "byte", range: [0, 100]}` | Tiny integers |
+| `float` | `range: [min, max]` | `temperature: {type: "float", range: [-40.0, 85.0]}` | Measurements |
+| `double` | `range: [min, max]` | `latitude: {type: "double", range: [-90.0, 90.0]}` | High precision |
+| `decimal` | `precision, scale, range` | `price: {type: "decimal", precision: 10, scale: 2, range: [0.01, 999.99]}` | Money |
+| `boolean` | `values: [...]`, `weights: [...]` | `is_active: {type: "boolean", values: [true, false], weights: [0.8, 0.2]}` | Flags |
+| `timestamp` | `begin, end` (optional) | `event_time: {type: "timestamp", begin: "2024-01-01 00:00:00", end: "2024-12-31 23:59:59"}` | Date/time |
+| `date` | `begin, end` | `birth_date: {type: "date", begin: "1950-01-01", end: "2005-12-31"}` | Dates only |
+| `binary` | None | `raw_data: {type: "binary"}` | Binary data |
+
+#### Complex/Nested Types
+
 | Type | Configuration | Example |
 |------|--------------|---------|
-| `uuid` | None | `event_id: {type: "uuid"}` |
-| `int` | `range: [min, max]` | `user_id: {type: "int", range: [1, 1000000]}` |
-| `float` | `range: [min, max]` | `amount: {type: "float", range: [10.0, 500.0]}` |
-| `string` | `values: [...]` or `values: [...], weights: [...]` | `page_url: {type: "string", values: ["/home", "/products"]}` |
-| `timestamp` | None (uses current time) | `event_timestamp: {type: "timestamp"}` |
+| `array` | `item_type, values, num_features` | `tags: {type: "array", item_type: "string", values: ["urgent", "normal"], num_features: [1, 5]}` |
+| `struct` | `fields: {...}` | `address: {type: "struct", fields: {city: {type: "string"}, zip: {type: "int"}}}` |
+| `map` | `key_type, value_type, values` | `metadata: {type: "map", key_type: "string", value_type: "string", values: [{...}]}` |
+
+**See [TYPE_SYSTEM.md](docs/TYPE_SYSTEM.md) for complete type reference with examples.**
+
+#### Quick Type Examples
+
+```yaml
+# Boolean with probability
+is_premium:
+  type: boolean
+  values: [true, false]
+  weights: [0.15, 0.85]  # 15% premium
+
+# Long for large IDs
+account_id:
+  type: long
+  range: [1000000000, 9999999999]
+
+# Double for coordinates
+latitude:
+  type: double
+  range: [-90.0, 90.0]
+
+# Date with range
+registration_date:
+  type: date
+  begin: "2020-01-01"
+  end: "2024-12-31"
+
+# Array of strings
+tags:
+  type: array
+  item_type: string
+  values: ["urgent", "normal", "low"]
+  num_features: [1, 4]  # 1-4 tags
+
+# Nested struct
+address:
+  type: struct
+  fields:
+    street: {type: string, values: ["123 Main St"]}
+    city: {type: string, values: ["NYC", "LA"]}
+    zip: {type: int, range: [10000, 99999]}
+
+# Map
+metadata:
+  type: map
+  key_type: string
+  value_type: string
+  values:
+    - {"env": "prod", "region": "us-east"}
+    - {"env": "dev", "region": "us-west"}
+```
 
 ### Common Fields
 
@@ -477,9 +783,19 @@ sink_config:
 
 ## Documentation
 
-- **Example Config**: `sample/configs/simple_config.yaml`
-- **Stress Test Config**: `sample/configs/1500_events_config.yaml`
-- **Example Notebook**: `sample/notebooks/01_simple_example.py`
+### Configuration Examples
+- **Basic Example**: `sample/configs/simple_config.yaml` - Simple types, web analytics pattern
+- **Extended Types**: `sample/configs/extended_types_config.yaml` - All simple types (boolean, long, double, date, etc.)
+- **Nested Types**: `sample/configs/nested_types_config.yaml` - Complex types (array, struct, map)
+- **Stress Test**: `sample/configs/1500_events_config.yaml` - 1500+ event types at scale
+
+### Notebooks
+- **Quick Start**: `sample/notebooks/01_simple_example.py` - End-to-end Kinesis + Delta examples
+
+### Type System
+- **Complete Type Reference**: `docs/TYPE_SYSTEM.md` - All 13 supported types with examples
+- **Simple Types**: uuid, string, int, long, short, byte, float, double, decimal, boolean, timestamp, date, binary
+- **Complex Types**: array, struct, map (with nesting support)
 
 
 ---

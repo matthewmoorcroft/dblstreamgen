@@ -1,0 +1,214 @@
+# dblstreamgen Nested Types Configuration Example
+#
+# This configuration showcases complex nested data types:
+# - Arrays (variable and fixed length)
+# - Structs (nested and multi-level)
+# - Maps (key-value pairs)
+#
+# Use this as a reference for building complex event schemas
+
+# ============================================================================
+# MAIN CONFIGURATION
+# ============================================================================
+
+generation_mode: "streaming"
+
+streaming_config:
+  total_rows_per_second: 500
+
+sink_config:
+  type: "delta"
+  table_name: "catalog.schema.nested_types_demo"
+  partition_key_field: "event_name"
+
+# ============================================================================
+# SCHEMA CONFIGURATION - Nested Types
+# ============================================================================
+
+common_fields:
+  event_name:
+    type: "string"
+  
+  event_id:
+    type: "uuid"
+  
+  event_timestamp:
+    type: "timestamp"
+  
+  user_id:
+    type: "long"
+    range: [1000000, 999999999]
+  
+  # Array type - tags/categories
+  tags:
+    type: "array"
+    item_type: "string"
+    values: ["urgent", "important", "normal", "low-priority", "archived"]
+    num_features: [1, 4]  # 1-4 tags per event
+  
+  # Struct type - user location
+  location:
+    type: "struct"
+    fields:
+      city:
+        type: "string"
+        values: ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix"]
+      state:
+        type: "string"
+        values: ["NY", "CA", "IL", "TX", "AZ"]
+      zip_code:
+        type: "int"
+        range: [10000, 99999]
+      coordinates:
+        type: "struct"
+        fields:
+          lat:
+            type: "double"
+            range: [25.0, 48.0]
+          lon:
+            type: "double"
+            range: [-125.0, -65.0]
+
+# Event types demonstrating nested structures
+event_types:
+  # User profile update with nested user info
+  - event_type_id: "user.profile_update"
+    weight: 0.30
+    fields:
+      # Nested struct - user profile
+      profile:
+        type: "struct"
+        fields:
+          first_name:
+            type: "string"
+            values: ["Alice", "Bob", "Charlie", "Diana", "Eve"]
+          last_name:
+            type: "string"
+            values: ["Smith", "Johnson", "Williams", "Brown", "Jones"]
+          age:
+            type: "int"
+            range: [18, 75]
+          email:
+            type: "string"
+            values: ["user@example.com", "test@demo.com", "contact@site.com"]
+          preferences:
+            type: "struct"
+            fields:
+              theme:
+                type: "string"
+                values: ["dark", "light", "auto"]
+              notifications:
+                type: "boolean"
+                values: [true, false]
+                weights: [0.7, 0.3]
+              language:
+                type: "string"
+                values: ["en", "es", "fr", "de", "zh"]
+      
+      # Map type - metadata
+      metadata:
+        type: "map"
+        key_type: "string"
+        value_type: "string"
+        values:
+          - {"source": "web", "campaign": "summer2024"}
+          - {"source": "mobile", "campaign": "spring2024"}
+          - {"source": "api", "campaign": "partner_referral"}
+        weights: [0.5, 0.3, 0.2]
+  
+  # Product view with arrays
+  - event_type_id: "product.view"
+    weight: 0.40
+    fields:
+      product_id:
+        type: "long"
+        range: [1000, 999999]
+      
+      # Array of product categories
+      categories:
+        type: "array"
+        item_type: "string"
+        values: ["electronics", "clothing", "home", "sports", "books", "toys"]
+        num_features: [1, 3]  # 1-3 categories per product
+      
+      # Array of image URLs
+      image_urls:
+        type: "array"
+        item_type: "string"
+        values: ["/img/1.jpg", "/img/2.jpg", "/img/3.jpg", "/img/4.jpg"]
+        num_features: [2, 4]  # 2-4 images per product
+      
+      # Struct - pricing info
+      pricing:
+        type: "struct"
+        fields:
+          base_price:
+            type: "decimal"
+            precision: 10
+            scale: 2
+            range: [9.99, 999.99]
+          discount_percent:
+            type: "int"
+            range: [0, 50]
+          final_price:
+            type: "decimal"
+            precision: 10
+            scale: 2
+            range: [5.00, 999.99]
+          currency:
+            type: "string"
+            values: ["USD", "EUR", "GBP", "JPY"]
+  
+  # Order with complex nested structure
+  - event_type_id: "order.placed"
+    weight: 0.30
+    fields:
+      order_id:
+        type: "long"
+        range: [1000000000, 9999999999]
+      
+      # Array of integers - item quantities
+      item_quantities:
+        type: "array"
+        item_type: "int"
+        values: [1, 2, 3, 4, 5]
+        num_features: [1, 5]  # 1-5 items per order
+      
+      # Complex struct - shipping details
+      shipping:
+        type: "struct"
+        fields:
+          address:
+            type: "struct"
+            fields:
+              street:
+                type: "string"
+                values: ["123 Main St", "456 Oak Ave", "789 Elm Rd", "321 Pine Ln"]
+              city:
+                type: "string"
+                values: ["New York", "Los Angeles", "Chicago"]
+              state:
+                type: "string"
+                values: ["NY", "CA", "IL"]
+              zip:
+                type: "int"
+                range: [10000, 99999]
+          method:
+            type: "string"
+            values: ["standard", "express", "overnight"]
+            weights: [0.6, 0.3, 0.1]
+          tracking_numbers:
+            type: "array"
+            item_type: "string"
+            values: ["TRK001", "TRK002", "TRK003", "TRK004"]
+            num_features: [1, 2]  # 1-2 tracking numbers
+      
+      # Map - order attributes
+      attributes:
+        type: "map"
+        key_type: "string"
+        value_type: "string"
+        values:
+          - {"gift_wrap": "true", "gift_message": "Happy Birthday"}
+          - {"priority": "high", "notes": "Handle with care"}
+          - {"promo_code": "SAVE20", "discount_applied": "true"}
