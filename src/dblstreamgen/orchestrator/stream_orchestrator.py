@@ -75,10 +75,15 @@ class StreamOrchestrator:
         spec = self._build_complete_spec()
         df = self._build_dataframe_from_spec(spec)
         
-        # Only serialize if requested (for Kinesis/Kafka)
+        # Handle serialization modes differently
         if serialize:
+            # Kinesis/Kafka mode: Serialize to JSON (internal columns excluded from JSON)
             df = self._serialize_wide_schema(df)
-        
+        else:
+            # Parquet/Delta mode: Return wide schema, drop internal columns
+            internal_columns = [col for col in df.columns if col.startswith('_')]
+            df = df.drop(*internal_columns)
+
         # Log creation with format type
         rates = self.calculate_rates()
         field_registry = self._build_field_registry()
@@ -96,12 +101,15 @@ class StreamOrchestrator:
     
     def _get_event_type_field_name(self) -> str:
         """
-        Get the event type field name from configuration.
-        
+        Get the internal event type discriminator field name.
+
+        This is an INTERNAL field used for conditional logic only.
+        It is prefixed with underscore and dropped before output.
+
         Returns:
-            'event_name' if defined in common_fields, otherwise 'event_type_id'
+            '_event_type_id' - internal discriminator column
         """
-        return 'event_name' if 'event_name' in self.config.data.get('common_fields', {}) else 'event_type_id'
+        return '_event_type_id'
     
     def _build_complete_spec(self) -> dg.DataGenerator:
         """Build complete dbldatagen spec with all fields."""
@@ -185,89 +193,101 @@ class StreamOrchestrator:
         return spec
     
     def _add_conditional_fields_to_spec(self, spec, field_registry: Dict) -> dg.DataGenerator:
-        """Add conditional fields using SQL CASE with IN clause, supporting nested types."""
+        """Add conditional fields with per-event-type CASE expressions, supporting nested types.
+        
+        The field_registry maps field_name -> {event_type_id: field_spec, ...}
+        so each event type can have different values/ranges for the same field.
+        """
         event_type_field = self._get_event_type_field_name()
         common_field_names = set(self.config.data.get('common_fields', {}).keys())
-        
-        for field_name, field_info in field_registry.items():
+
+        for field_name, event_type_specs in field_registry.items():
             # Skip fields that are already added as common fields
             if field_name in common_field_names:
                 logger.debug(f"Skipping conditional field '{field_name}' (already in common_fields)")
                 continue
-            
-            field_spec = field_info['spec']
-            event_types = field_info['event_types']
-            field_type_name = field_spec.get('type')
-            
-            # Handle nested types (array, struct, map)
+
+            # Use the first spec to determine field type (all should be same type per validation)
+            first_spec = next(iter(event_type_specs.values()))
+            field_type_name = first_spec.get('type')
+
+            # Handle nested types (array, struct, map) - use first spec for structure
             if field_type_name == 'array':
+                event_types = list(event_type_specs.keys())
                 spec, array_expr, generated_cols = self._process_array_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final array column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {array_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {array_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
-            
+
             elif field_type_name == 'struct':
+                event_types = list(event_type_specs.keys())
                 spec, struct_expr, generated_cols = self._process_struct_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final struct column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {struct_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {struct_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
-            
+
             elif field_type_name == 'map':
+                event_types = list(event_type_specs.keys())
                 spec, map_expr, generated_cols = self._process_map_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final map column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {map_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {map_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=event_type_field)
-            
+
             else:
-                # Simple field types
-                field_sql = self._generate_sql_expression(field_spec)
-                
-                if len(event_types) == 1:
-                    sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {field_sql} ELSE NULL END"
-                else:
-                    event_list = "', '".join(event_types)
-                    sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {field_sql} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+                # Simple field types - build CASE with separate WHEN per event type
+                sql_expr = "CASE "
+                field_type = None
+
+                for event_type_id, field_spec in event_type_specs.items():
+                    field_sql = self._generate_sql_expression(field_spec)
+                    sql_expr += f"WHEN {event_type_field} = '{event_type_id}' THEN {field_sql} "
+
+                    if field_type is None:
+                        field_type = self._get_spark_type(field_spec)
+
+                sql_expr += "ELSE NULL END"
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=event_type_field)
-        
+
         return spec
     
-    def _build_field_registry(self) -> Dict[str, Dict[str, Any]]:
-        """Build registry of all unique fields across event types."""
+    def _build_field_registry(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Build registry mapping field_name -> event_type_id -> field_spec.
+        
+        Each event type's field spec is stored independently so that
+        different event types can have different values/ranges for the
+        same field name (e.g., error_type = 'FATAL' vs 'NON_FATAL').
+        """
         registry = {}
         for event_type in self.config.data['event_types']:
+            event_type_id = event_type['event_type_id']
             for field_name, field_spec in event_type.get('fields', {}).items():
                 if field_name not in registry:
-                    registry[field_name] = {'spec': field_spec, 'event_types': [event_type['event_type_id']]}
-                else:
-                    registry[field_name]['event_types'].append(event_type['event_type_id'])
+                    registry[field_name] = {}
+                # Store spec per event type (not merged!)
+                registry[field_name][event_type_id] = field_spec
         return registry
     
     def _generate_sql_expression(self, field_spec: Dict[str, Any]) -> str:

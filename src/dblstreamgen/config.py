@@ -15,7 +15,7 @@ class Config:
     Configuration container with validation.
     
     Validates:
-    - Event type weights sum to 1.0
+    - Event type weights are positive integers
     - Required fields present
     - Field types supported
     """
@@ -43,12 +43,11 @@ class Config:
         if not event_types:
             raise ConfigurationError("At least one event type must be defined")
         
-        # Validate weights sum to 1.0
+        # Validate weights are positive integers
         weights = [et.get('weight', 0) for et in event_types]
-        weight_sum = sum(weights)
-        if abs(weight_sum - 1.0) > 0.001:
+        if not all(isinstance(w, int) and w > 0 for w in weights):
             raise ConfigurationError(
-                f"Event type weights must sum to 1.0, got {weight_sum:.4f}"
+                f"Event type weights must be positive integers (e.g., [6, 3, 1] for 60%/30%/10%)"
             )
         
         # Validate event type IDs are unique
@@ -56,6 +55,17 @@ class Config:
         if len(event_ids) != len(set(event_ids)):
             raise ConfigurationError("Event type IDs must be unique")
         
+        # Validate common_fields weights are positive integers (if present)
+        common_fields = self.data.get('common_fields', {})
+        for field_name, field_spec in common_fields.items():
+            if 'weights' in field_spec:
+                weights = field_spec['weights']
+                if not all(isinstance(w, int) and w > 0 for w in weights):
+                    raise ConfigurationError(
+                        f"Weights for common_fields.{field_name} must be positive integers. "
+                        f"Got: {weights}. Example: [2, 4, 4] instead of [0.2, 0.4, 0.4]"
+                    )
+
         # Validate generation mode
         gen_mode = self.data['generation_mode']
         if gen_mode not in ['streaming', 'batch']:
