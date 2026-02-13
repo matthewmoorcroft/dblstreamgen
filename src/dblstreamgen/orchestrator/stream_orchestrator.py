@@ -294,7 +294,10 @@ class StreamOrchestrator:
         """
         Generate SQL expression for field generation.
         
-        Supports: uuid(), CAST(rand()...) for int/float, CASE/WHEN for strings, current_timestamp()
+        Supports: uuid(), CAST(rand()...) for int/float/long, CASE/WHEN for strings,
+        current_timestamp(), boolean.
+        
+        If percent_nulls is specified, wraps the expression to randomly inject NULLs.
         
         Args:
             field_spec: Field specification with type and parameters
@@ -302,6 +305,17 @@ class StreamOrchestrator:
         Returns:
             SQL expression string
         """
+        expr = self._generate_value_expression(field_spec)
+        
+        # Apply percent_nulls wrapping if specified
+        percent_nulls = field_spec.get('percent_nulls', 0)
+        if percent_nulls and percent_nulls > 0:
+            expr = f"CASE WHEN rand() < {percent_nulls} THEN NULL ELSE {expr} END"
+        
+        return expr
+    
+    def _generate_value_expression(self, field_spec: Dict[str, Any]) -> str:
+        """Generate the core value SQL expression (without null wrapping)."""
         field_type = field_spec.get('type')
         
         if field_type == 'uuid':
@@ -322,10 +336,12 @@ class StreamOrchestrator:
             weights = field_spec.get('weights')
             
             if weights:
+                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
+                total_weight = sum(weights)
                 cumulative = 0.0
                 sql_expr = "CASE "
                 for value, weight in zip(values, weights):
-                    cumulative += weight
+                    cumulative += weight / total_weight
                     sql_expr += f"WHEN rand() < {cumulative} THEN '{value}' "
                 sql_expr += f"ELSE '{values[-1]}' END"
                 return sql_expr
@@ -355,10 +371,12 @@ class StreamOrchestrator:
             weights = field_spec.get('weights')
             
             if weights:
+                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
+                total_weight = sum(weights)
                 cumulative = 0.0
                 sql_expr = "CASE "
                 for value, weight in zip(values, weights):
-                    cumulative += weight
+                    cumulative += weight / total_weight
                     bool_str = 'true' if value else 'false'
                     sql_expr += f"WHEN rand() < {cumulative} THEN {bool_str} "
                 bool_str = 'true' if values[-1] else 'false'
