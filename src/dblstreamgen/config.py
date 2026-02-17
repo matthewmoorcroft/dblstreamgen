@@ -85,6 +85,18 @@ class Config:
         if 'type' not in sink_config:
             raise ConfigurationError("sink_config.type is required")
         
+        # Validate derived_fields (if present)
+        derived_fields = self.data.get('derived_fields', {})
+        for field_name, field_spec in derived_fields.items():
+            if 'expr' not in field_spec:
+                raise ConfigurationError(
+                    f"derived_fields.{field_name} must specify 'expr'"
+                )
+            if 'type' not in field_spec:
+                raise ConfigurationError(
+                    f"derived_fields.{field_name} must specify 'type'"
+                )
+        
         # Validate supported field types
         self._validate_field_types()
         

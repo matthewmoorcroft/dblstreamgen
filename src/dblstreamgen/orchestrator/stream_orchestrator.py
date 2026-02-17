@@ -118,6 +118,7 @@ class StreamOrchestrator:
         spec = self._add_common_fields_to_spec(spec)
         field_registry = self._build_field_registry()
         spec = self._add_conditional_fields_to_spec(spec, field_registry)
+        spec = self._add_derived_fields_to_spec(spec)
         return spec
     
     def _create_base_spec(self) -> dg.DataGenerator:
@@ -273,6 +274,42 @@ class StreamOrchestrator:
 
         return spec
     
+    def _add_derived_fields_to_spec(self, spec) -> dg.DataGenerator:
+        """Add derived fields that reference other generated columns.
+        
+        Derived fields use SQL expressions that can reference any previously
+        generated column (common fields, conditional fields, or struct sub-fields).
+        They are added last to ensure all dependencies exist.
+        
+        Config format:
+            derived_fields:
+              received_timestamp:
+                type: timestamp
+                expr: "event_timestamp + CAST((rand() * 600 + 1) AS INT) * INTERVAL '1' SECOND"
+                base_columns: ["event_timestamp"]
+                percent_nulls: 0.05  # optional
+        """
+        derived_fields = self.config.data.get('derived_fields', {})
+        
+        for field_name, field_spec in derived_fields.items():
+            raw_expr = field_spec.get('expr')
+            if not raw_expr:
+                raise ValueError(f"derived_fields.{field_name} must specify 'expr'")
+            
+            # Apply outlier and null wrapping via the standard pipeline
+            final_expr = self._generate_sql_expression(field_spec)
+            field_type = self._get_spark_type(field_spec)
+            base_columns = field_spec.get('base_columns', [])
+            
+            if base_columns:
+                spec = spec.withColumn(field_name, field_type, expr=final_expr, baseColumn=base_columns)
+            else:
+                spec = spec.withColumn(field_name, field_type, expr=final_expr)
+            
+            logger.debug(f"Added derived field '{field_name}' (type={field_type}, base={base_columns})")
+        
+        return spec
+    
     def _build_field_registry(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """Build registry mapping field_name -> event_type_id -> field_spec.
         
@@ -294,10 +331,10 @@ class StreamOrchestrator:
         """
         Generate SQL expression for field generation.
         
-        Supports: uuid(), CAST(rand()...) for int/float/long, CASE/WHEN for strings,
-        current_timestamp(), boolean.
-        
-        If percent_nulls is specified, wraps the expression to randomly inject NULLs.
+        Layered wrapping applied in order:
+        1. Core value expression (from type/values/range or raw expr)
+        2. Outlier injection (randomly replace with bad/edge-case values)
+        3. Null injection (randomly replace with NULL)
         
         Args:
             field_spec: Field specification with type and parameters
@@ -307,7 +344,16 @@ class StreamOrchestrator:
         """
         expr = self._generate_value_expression(field_spec)
         
-        # Apply percent_nulls wrapping if specified
+        # Layer 1: Outlier injection (bad data for testing)
+        outliers = field_spec.get('outliers', [])
+        if outliers:
+            wrapped = "CASE "
+            for outlier in outliers:
+                wrapped += f"WHEN rand() < {outlier['percent']} THEN {outlier['expr']} "
+            wrapped += f"ELSE {expr} END"
+            expr = wrapped
+        
+        # Layer 2: Null injection
         percent_nulls = field_spec.get('percent_nulls', 0)
         if percent_nulls and percent_nulls > 0:
             expr = f"CASE WHEN rand() < {percent_nulls} THEN NULL ELSE {expr} END"
@@ -315,7 +361,16 @@ class StreamOrchestrator:
         return expr
     
     def _generate_value_expression(self, field_spec: Dict[str, Any]) -> str:
-        """Generate the core value SQL expression (without null wrapping)."""
+        """Generate the core value SQL expression (without null/outlier wrapping).
+        
+        If the field spec contains a raw 'expr' key, it is returned directly,
+        bypassing type-based generation. This allows arbitrary SQL expressions
+        in the config (e.g., concat('prefix_', uuid())).
+        """
+        # Raw expr passthrough: use the SQL expression directly
+        if 'expr' in field_spec:
+            return field_spec['expr']
+        
         field_type = field_spec.get('type')
         
         if field_type == 'uuid':
@@ -334,6 +389,10 @@ class StreamOrchestrator:
         elif field_type == 'string':
             values = field_spec.get('values', ['value'])
             weights = field_spec.get('weights')
+            
+            # Single value: return literal directly
+            if len(values) == 1:
+                return f"'{values[0]}'"
             
             if weights:
                 # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
@@ -369,6 +428,10 @@ class StreamOrchestrator:
             # Support values with weights for probability
             values = field_spec.get('values', [True, False])
             weights = field_spec.get('weights')
+            
+            # Single value: return literal directly
+            if len(values) == 1:
+                return 'true' if values[0] else 'false'
             
             if weights:
                 # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
