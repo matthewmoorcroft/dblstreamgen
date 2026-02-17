@@ -705,42 +705,51 @@ class StreamOrchestrator:
         """
         Process map field by generating discrete map values.
         
+        Uses a hidden rand column to avoid sequential-rand() bias
+        when multiple weighted map values are configured.
+        
         Returns:
-            tuple: (spec with map column added, map_expr)
+            tuple: (spec with map column added, map_expr, generated_cols)
         """
         values = field_spec.get('values', [])
         weights = field_spec.get('weights')
         
         if not values:
-            # Empty map by default
             key_type = field_spec.get('key_type', 'string')
             value_type = field_spec.get('value_type', 'string')
-            return spec, f"map()", []
+            return spec, "map()", []
         
-        # Generate map from discrete values
-        # values should be list of dicts: [{"key1": "val1"}, {"key2": "val2"}]
+        generated_cols = []
+        
+        # Add hidden rand column for weighted selection
+        if len(values) > 1:
+            rand_col_name = f"_rand_{field_name}"
+            spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
+            generated_cols.append(rand_col_name)
+            rand_ref = rand_col_name
+        else:
+            rand_ref = "rand()"
+        
         if weights:
+            total_weight = sum(weights)
             cumulative = 0.0
             sql_expr = "CASE "
             for value_dict, weight in zip(values, weights):
-                cumulative += weight
-                # Convert dict to map SQL
+                cumulative += weight / total_weight
                 map_pairs = [f"'{k}', '{v}'" for k, v in value_dict.items()]
-                sql_expr += f"WHEN rand() < {cumulative} THEN map({', '.join(map_pairs)}) "
-            # Last value
+                sql_expr += f"WHEN {rand_ref} < {cumulative} THEN map({', '.join(map_pairs)}) "
             map_pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(map_pairs)}) END"
         else:
-            # Equal probability for each map
             threshold = 1.0 / len(values)
             sql_expr = "CASE "
             for i, value_dict in enumerate(values):
                 map_pairs = [f"'{k}', '{v}'" for k, v in value_dict.items()]
-                sql_expr += f"WHEN rand() < {(i+1) * threshold} THEN map({', '.join(map_pairs)}) "
+                sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN map({', '.join(map_pairs)}) "
             map_pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(map_pairs)}) END"
         
-        return spec, sql_expr, []
+        return spec, sql_expr, generated_cols
     
     def _get_spark_type(self, field_spec: Dict[str, Any]) -> str:
         """Map field type to Spark SQL type string."""
