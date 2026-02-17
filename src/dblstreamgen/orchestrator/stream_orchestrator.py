@@ -26,17 +26,22 @@ class StreamOrchestrator:
         self.config = config
     
     def calculate_rates(self) -> Dict[str, float]:
-        """Calculate rows per second for each event type based on weights (streaming mode only)."""
+        """Calculate rows per second for each event type based on weights (streaming mode only).
+        
+        Weights are positive integers (e.g., [6, 3, 1]) that are normalized
+        to proportions before multiplying by total_rows_per_second.
+        """
         if self.config.data['generation_mode'] != 'streaming':
             return {}
         
         total_rate = self.config.data['streaming_config']['total_rows_per_second']
+        total_weight = sum(et['weight'] for et in self.config.data['event_types'])
         
         rates = {}
         for event_type in self.config.data['event_types']:
             event_id = event_type['event_type_id']
             weight = event_type['weight']
-            rates[event_id] = total_rate * weight
+            rates[event_id] = total_rate * (weight / total_weight)
         
         return rates
     
@@ -418,13 +423,22 @@ class StreamOrchestrator:
         expr = self._generate_value_expression(field_spec, rand_col=rand_col)
         
         # Layer 1: Outlier injection (bad data for testing)
+        # Uses a two-level CASE so the total outlier rate is controlled by a
+        # single rand() gate, avoiding the sequential-rand() bias where each
+        # WHEN branch evaluates rand() independently.
         outliers = field_spec.get('outliers', [])
         if outliers:
-            wrapped = "CASE "
-            for outlier in outliers:
-                wrapped += f"WHEN rand() < {outlier['percent']} THEN {outlier['expr']} "
-            wrapped += f"ELSE {expr} END"
-            expr = wrapped
+            total_outlier_pct = sum(o['percent'] for o in outliers)
+            if len(outliers) == 1:
+                expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {outliers[0]['expr']} ELSE {expr} END"
+            else:
+                inner = "CASE "
+                cumulative = 0.0
+                for outlier in outliers:
+                    cumulative += outlier['percent'] / total_outlier_pct
+                    inner += f"WHEN rand() < {cumulative} THEN {outlier['expr']} "
+                inner += f"ELSE {outliers[-1]['expr']} END"
+                expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {inner} ELSE {expr} END"
         
         # Layer 2: Null injection
         percent_nulls = field_spec.get('percent_nulls', 0)
