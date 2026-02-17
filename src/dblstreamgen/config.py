@@ -15,7 +15,7 @@ class Config:
     Configuration container with validation.
     
     Validates:
-    - Event type weights sum to 1.0
+    - Event type weights are positive integers
     - Required fields present
     - Field types supported
     """
@@ -43,12 +43,11 @@ class Config:
         if not event_types:
             raise ConfigurationError("At least one event type must be defined")
         
-        # Validate weights sum to 1.0
+        # Validate weights are positive integers
         weights = [et.get('weight', 0) for et in event_types]
-        weight_sum = sum(weights)
-        if abs(weight_sum - 1.0) > 0.001:
+        if not all(isinstance(w, int) and w > 0 for w in weights):
             raise ConfigurationError(
-                f"Event type weights must sum to 1.0, got {weight_sum:.4f}"
+                f"Event type weights must be positive integers (e.g., [6, 3, 1] for 60%/30%/10%)"
             )
         
         # Validate event type IDs are unique
@@ -56,6 +55,17 @@ class Config:
         if len(event_ids) != len(set(event_ids)):
             raise ConfigurationError("Event type IDs must be unique")
         
+        # Validate common_fields weights are positive integers (if present)
+        common_fields = self.data.get('common_fields', {})
+        for field_name, field_spec in common_fields.items():
+            if 'weights' in field_spec:
+                weights = field_spec['weights']
+                if not all(isinstance(w, int) and w > 0 for w in weights):
+                    raise ConfigurationError(
+                        f"Weights for common_fields.{field_name} must be positive integers. "
+                        f"Got: {weights}. Example: [2, 4, 4] instead of [0.2, 0.4, 0.4]"
+                    )
+
         # Validate generation mode
         gen_mode = self.data['generation_mode']
         if gen_mode not in ['streaming', 'batch']:
@@ -75,8 +85,23 @@ class Config:
         if 'type' not in sink_config:
             raise ConfigurationError("sink_config.type is required")
         
+        # Validate derived_fields (if present)
+        derived_fields = self.data.get('derived_fields', {})
+        for field_name, field_spec in derived_fields.items():
+            if 'expr' not in field_spec:
+                raise ConfigurationError(
+                    f"derived_fields.{field_name} must specify 'expr'"
+                )
+            if 'type' not in field_spec:
+                raise ConfigurationError(
+                    f"derived_fields.{field_name} must specify 'type'"
+                )
+        
         # Validate supported field types
         self._validate_field_types()
+        
+        # Validate outliers and percent_nulls across all field specs
+        self._validate_field_options()
         
         # Validate field type consistency across event types
         self._validate_field_type_consistency()
@@ -108,6 +133,56 @@ class Config:
                         f"{event_type['event_type_id']}.fields.{field_name}. "
                         f"Supported types: {supported_types}"
                     )
+    
+    def _validate_field_options(self):
+        """Validate outliers and percent_nulls across all field specs."""
+        # Check common fields (including struct sub-fields)
+        for field_name, field_spec in self.data.get('common_fields', {}).items():
+            self._validate_single_field_options(field_spec, f"common_fields.{field_name}")
+        
+        # Check event-type fields
+        for event_type in self.data['event_types']:
+            et_id = event_type['event_type_id']
+            for field_name, field_spec in event_type.get('fields', {}).items():
+                self._validate_single_field_options(field_spec, f"{et_id}.fields.{field_name}")
+        
+        # Check derived fields
+        for field_name, field_spec in self.data.get('derived_fields', {}).items():
+            self._validate_single_field_options(field_spec, f"derived_fields.{field_name}")
+    
+    def _validate_single_field_options(self, field_spec: dict, location: str):
+        """Validate outliers and percent_nulls on a single field spec, recursing into structs."""
+        # Validate outliers
+        outliers = field_spec.get('outliers', [])
+        if not isinstance(outliers, list):
+            raise ConfigurationError(f"{location}.outliers must be a list")
+        for i, outlier in enumerate(outliers):
+            if 'percent' not in outlier:
+                raise ConfigurationError(
+                    f"{location}.outliers[{i}] missing required key 'percent'"
+                )
+            if 'expr' not in outlier:
+                raise ConfigurationError(
+                    f"{location}.outliers[{i}] missing required key 'expr'"
+                )
+            pct = outlier['percent']
+            if not isinstance(pct, (int, float)) or pct <= 0 or pct >= 1:
+                raise ConfigurationError(
+                    f"{location}.outliers[{i}].percent must be between 0 and 1 (exclusive), got {pct}"
+                )
+        
+        # Validate percent_nulls
+        pn = field_spec.get('percent_nulls')
+        if pn is not None:
+            if not isinstance(pn, (int, float)) or pn < 0 or pn >= 1:
+                raise ConfigurationError(
+                    f"{location}.percent_nulls must be between 0 and 1 (exclusive), got {pn}"
+                )
+        
+        # Recurse into struct sub-fields
+        if field_spec.get('type') == 'struct':
+            for sub_name, sub_spec in field_spec.get('fields', {}).items():
+                self._validate_single_field_options(sub_spec, f"{location}.fields.{sub_name}")
     
     def _compare_field_specs(self, spec1: dict, spec2: dict, field_name: str, loc1: str, loc2: str):
         """

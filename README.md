@@ -26,11 +26,14 @@
 `dblstreamgen` is a Spark/Databricks library for generating synthetic streaming data using `dbldatagen`. It supports multiple event types, weighted rate distribution, and streaming to various sinks (Kinesis, Kafka, Event Hubs, Delta).
 
 **Key Features:**
-- **Config-driven** - Define schemas in YAML
+- **Config-driven** - Define schemas in YAML with no code required
 - **dbldatagen-powered** - Leverages Spark for scale
 - **Multiple event types** - Wide schema approach for 1500+ types
-- **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta (planned)
+- **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta
 - **Use-case agnostic** - Works for any domain
+- **Data quality testing** - Outlier injection and null injection for testing pipelines
+- **Derived fields** - Computed columns that reference other generated fields
+- **Nested structs** - Complex nested types assembled automatically from config
 
 ---
 
@@ -69,7 +72,7 @@ make build              # Build wheel
 make release-patch      # Full release workflow
 ```
 
-**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
+**Output:** `dist/dblstreamgen-0.2.0-py3-none-any.whl`
 
 For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
 
@@ -84,14 +87,14 @@ For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD
 CREATE VOLUME IF NOT EXISTS catalog.schema.libraries;
 
 # Upload the wheel using Databricks UI or CLI
-# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
 ```
 
 #### Step 2: Install in Notebook
 
 ```python
 # Install the library
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
 
 # Restart Python to load the library
 dbutils.library.restartPython()
@@ -120,7 +123,7 @@ Copy these cells into a Databricks notebook or see the complete example at `samp
 **Cell 1 - Install:**
 ```python
 # Install from Unity Catalog volume
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
 dbutils.library.restartPython()
 ```
 
@@ -664,7 +667,7 @@ For scale testing with 1500+ event types, see `sample/configs/1500_events_config
 
 ```python
 # Make sure the wheel is installed
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
 
 # Restart Python
 dbutils.library.restartPython()
@@ -797,6 +800,15 @@ sink_config:
 - **Simple Types**: uuid, string, int, long, short, byte, float, double, decimal, boolean, timestamp, date, binary
 - **Complex Types**: array, struct, map (with nesting support)
 
+### v0.2.0 Features
+- **Outlier Injection**: Configure bad data percentages per field for data quality testing
+- **Raw `expr` Passthrough**: Use arbitrary SQL expressions for field generation
+- **Derived Fields**: Computed columns referencing other generated columns
+- **Weighted Distribution Fix**: Correct probability sampling for multi-value fields
+- **Integer Weights**: Event type weights accept integers (e.g., `[6, 3, 1]`), auto-normalized
+
+See `docs/TYPE_SYSTEM.md` for complete v0.2.0 documentation.
+
 
 ---
 
@@ -820,4 +832,4 @@ This library is licensed under the Databricks License and is intended for use in
 
 ---
 
-*dblstreamgen v0.1.0 - Synthetic streaming data generation for Databricks*
+*dblstreamgen v0.2.0 - Synthetic streaming & batch data generation for Databricks*

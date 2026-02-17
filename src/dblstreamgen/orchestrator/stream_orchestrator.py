@@ -26,17 +26,22 @@ class StreamOrchestrator:
         self.config = config
     
     def calculate_rates(self) -> Dict[str, float]:
-        """Calculate rows per second for each event type based on weights (streaming mode only)."""
+        """Calculate rows per second for each event type based on weights (streaming mode only).
+        
+        Weights are positive integers (e.g., [6, 3, 1]) that are normalized
+        to proportions before multiplying by total_rows_per_second.
+        """
         if self.config.data['generation_mode'] != 'streaming':
             return {}
         
         total_rate = self.config.data['streaming_config']['total_rows_per_second']
+        total_weight = sum(et['weight'] for et in self.config.data['event_types'])
         
         rates = {}
         for event_type in self.config.data['event_types']:
             event_id = event_type['event_type_id']
             weight = event_type['weight']
-            rates[event_id] = total_rate * weight
+            rates[event_id] = total_rate * (weight / total_weight)
         
         return rates
     
@@ -75,10 +80,15 @@ class StreamOrchestrator:
         spec = self._build_complete_spec()
         df = self._build_dataframe_from_spec(spec)
         
-        # Only serialize if requested (for Kinesis/Kafka)
+        # Handle serialization modes differently
         if serialize:
+            # Kinesis/Kafka mode: Serialize to JSON (internal columns excluded from JSON)
             df = self._serialize_wide_schema(df)
-        
+        else:
+            # Parquet/Delta mode: Return wide schema, drop internal columns
+            internal_columns = [col for col in df.columns if col.startswith('_')]
+            df = df.drop(*internal_columns)
+
         # Log creation with format type
         rates = self.calculate_rates()
         field_registry = self._build_field_registry()
@@ -96,12 +106,15 @@ class StreamOrchestrator:
     
     def _get_event_type_field_name(self) -> str:
         """
-        Get the event type field name from configuration.
-        
+        Get the internal event type discriminator field name.
+
+        This is an INTERNAL field used for conditional logic only.
+        It is prefixed with underscore and dropped before output.
+
         Returns:
-            'event_name' if defined in common_fields, otherwise 'event_type_id'
+            '_event_type_id' - internal discriminator column
         """
-        return 'event_name' if 'event_name' in self.config.data.get('common_fields', {}) else 'event_type_id'
+        return '_event_type_id'
     
     def _build_complete_spec(self) -> dg.DataGenerator:
         """Build complete dbldatagen spec with all fields."""
@@ -110,6 +123,7 @@ class StreamOrchestrator:
         spec = self._add_common_fields_to_spec(spec)
         field_registry = self._build_field_registry()
         spec = self._add_conditional_fields_to_spec(spec, field_registry)
+        spec = self._add_derived_fields_to_spec(spec)
         return spec
     
     def _create_base_spec(self) -> dg.DataGenerator:
@@ -143,7 +157,12 @@ class StreamOrchestrator:
             return spec.build()
     
     def _add_common_fields_to_spec(self, spec) -> dg.DataGenerator:
-        """Add common fields using dbldatagen expr, supporting nested types."""
+        """Add common fields using dbldatagen, supporting nested types.
+        
+        For string/boolean fields with multiple values+weights (no raw expr),
+        uses dbldatagen's native values/weights/random=True for correct
+        weighted distribution. All other fields use SQL expr approach.
+        """
         common_fields = self.config.data.get('common_fields', {})
         event_type_field = self._get_event_type_field_name()
         
@@ -176,112 +195,275 @@ class StreamOrchestrator:
                 field_type = self._get_spark_type(field_spec)
                 spec = spec.withColumn(field_name, field_type, expr=map_expr)
             
+            elif self._can_use_native_weights(field_spec):
+                # Use dbldatagen native values/weights for correct distribution
+                spec = self._add_native_weighted_field(spec, field_name, field_spec)
+            
             else:
-                # Simple field types
+                # Simple field types via SQL expr
                 sql_expr = self._generate_sql_expression(field_spec)
                 field_type = self._get_spark_type(field_spec)
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr)
         
         return spec
     
+    def _can_use_native_weights(self, field_spec: Dict[str, Any]) -> bool:
+        """Check if a field can use dbldatagen's native values/weights instead of SQL CASE.
+        
+        Native weights are correct for multi-value string/boolean fields when:
+        - No raw expr passthrough
+        - No outliers (native doesn't support layered outlier injection)
+        - Has multiple values
+        """
+        if 'expr' in field_spec:
+            return False
+        if field_spec.get('outliers'):
+            return False
+        field_type = field_spec.get('type')
+        if field_type not in ('string', 'boolean'):
+            return False
+        values = field_spec.get('values', [])
+        return len(values) > 1
+    
+    def _add_native_weighted_field(self, spec, field_name: str, field_spec: Dict[str, Any]) -> dg.DataGenerator:
+        """Add a field using dbldatagen's native values/weights (no SQL CASE bias)."""
+        field_type = self._get_spark_type(field_spec)
+        values = field_spec.get('values')
+        weights = field_spec.get('weights')
+        percent_nulls = field_spec.get('percent_nulls', 0)
+        
+        kwargs = {'values': values, 'random': True}
+        if weights:
+            kwargs['weights'] = weights
+        if percent_nulls and percent_nulls > 0:
+            kwargs['percentNulls'] = percent_nulls
+        
+        return spec.withColumn(field_name, field_type, **kwargs)
+    
     def _add_conditional_fields_to_spec(self, spec, field_registry: Dict) -> dg.DataGenerator:
-        """Add conditional fields using SQL CASE with IN clause, supporting nested types."""
+        """Add conditional fields with per-event-type CASE expressions, supporting nested types.
+        
+        The field_registry maps field_name -> {event_type_id: field_spec, ...}
+        so each event type can have different values/ranges for the same field.
+        """
         event_type_field = self._get_event_type_field_name()
         common_field_names = set(self.config.data.get('common_fields', {}).keys())
-        
-        for field_name, field_info in field_registry.items():
+
+        for field_name, event_type_specs in field_registry.items():
             # Skip fields that are already added as common fields
             if field_name in common_field_names:
                 logger.debug(f"Skipping conditional field '{field_name}' (already in common_fields)")
                 continue
-            
-            field_spec = field_info['spec']
-            event_types = field_info['event_types']
-            field_type_name = field_spec.get('type')
-            
-            # Handle nested types (array, struct, map)
+
+            # Use the first spec to determine field type (all should be same type per validation)
+            first_spec = next(iter(event_type_specs.values()))
+            field_type_name = first_spec.get('type')
+
+            # Handle nested types (array, struct, map) - use first spec for structure
             if field_type_name == 'array':
+                event_types = list(event_type_specs.keys())
                 spec, array_expr, generated_cols = self._process_array_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final array column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {array_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {array_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
-            
+
             elif field_type_name == 'struct':
+                event_types = list(event_type_specs.keys())
                 spec, struct_expr, generated_cols = self._process_struct_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final struct column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {struct_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {struct_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
-            
+
             elif field_type_name == 'map':
+                event_types = list(event_type_specs.keys())
                 spec, map_expr, generated_cols = self._process_map_field(
-                    spec, field_name, field_spec, event_type_field, event_types
+                    spec, field_name, first_spec, event_type_field, event_types
                 )
-                # Add final map column with conditional
                 if len(event_types) == 1:
                     sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {map_expr} ELSE NULL END"
                 else:
                     event_list = "', '".join(event_types)
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {map_expr} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
+
+                field_type = self._get_spark_type(first_spec)
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=event_type_field)
-            
+
             else:
-                # Simple field types
-                field_sql = self._generate_sql_expression(field_spec)
-                
-                if len(event_types) == 1:
-                    sql_expr = f"CASE WHEN {event_type_field} = '{event_types[0]}' THEN {field_sql} ELSE NULL END"
-                else:
-                    event_list = "', '".join(event_types)
-                    sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {field_sql} ELSE NULL END"
-                
-                field_type = self._get_spark_type(field_spec)
-                spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=event_type_field)
+                # Simple field types - build CASE with separate WHEN per event type
+                # For weighted multi-value fields, add a hidden rand column to avoid
+                # the sequential-rand() bias where each WHEN branch evaluates rand()
+                # independently (causing skewed distributions).
+                needs_rand_col = any(
+                    self._field_needs_rand_column(fs) for fs in event_type_specs.values()
+                )
+                rand_col_name = f"_rand_{field_name}"
+                base_cols = [event_type_field]
+
+                if needs_rand_col:
+                    spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
+                    base_cols.append(rand_col_name)
+
+                sql_expr = "CASE "
+                field_type = None
+
+                for event_type_id, field_spec in event_type_specs.items():
+                    field_sql = self._generate_sql_expression(
+                        field_spec, rand_col=rand_col_name if needs_rand_col else None
+                    )
+                    sql_expr += f"WHEN {event_type_field} = '{event_type_id}' THEN {field_sql} "
+
+                    if field_type is None:
+                        field_type = self._get_spark_type(field_spec)
+
+                sql_expr += "ELSE NULL END"
+                spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
+
+        return spec
+    
+    def _add_derived_fields_to_spec(self, spec) -> dg.DataGenerator:
+        """Add derived fields that reference other generated columns.
+        
+        Derived fields use SQL expressions that can reference any previously
+        generated column (common fields, conditional fields, or struct sub-fields).
+        They are added last to ensure all dependencies exist.
+        
+        Config format:
+            derived_fields:
+              received_timestamp:
+                type: timestamp
+                expr: "event_timestamp + CAST((rand() * 600 + 1) AS INT) * INTERVAL '1' SECOND"
+                base_columns: ["event_timestamp"]
+                percent_nulls: 0.05  # optional
+        """
+        derived_fields = self.config.data.get('derived_fields', {})
+        
+        for field_name, field_spec in derived_fields.items():
+            raw_expr = field_spec.get('expr')
+            if not raw_expr:
+                raise ValueError(f"derived_fields.{field_name} must specify 'expr'")
+            
+            # Apply outlier and null wrapping via the standard pipeline
+            final_expr = self._generate_sql_expression(field_spec)
+            field_type = self._get_spark_type(field_spec)
+            base_columns = field_spec.get('base_columns', [])
+            
+            if base_columns:
+                spec = spec.withColumn(field_name, field_type, expr=final_expr, baseColumn=base_columns)
+            else:
+                spec = spec.withColumn(field_name, field_type, expr=final_expr)
+            
+            logger.debug(f"Added derived field '{field_name}' (type={field_type}, base={base_columns})")
         
         return spec
     
-    def _build_field_registry(self) -> Dict[str, Dict[str, Any]]:
-        """Build registry of all unique fields across event types."""
+    def _build_field_registry(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Build registry mapping field_name -> event_type_id -> field_spec.
+        
+        Each event type's field spec is stored independently so that
+        different event types can have different values/ranges for the
+        same field name (e.g., error_type = 'FATAL' vs 'NON_FATAL').
+        """
         registry = {}
         for event_type in self.config.data['event_types']:
+            event_type_id = event_type['event_type_id']
             for field_name, field_spec in event_type.get('fields', {}).items():
                 if field_name not in registry:
-                    registry[field_name] = {'spec': field_spec, 'event_types': [event_type['event_type_id']]}
-                else:
-                    registry[field_name]['event_types'].append(event_type['event_type_id'])
+                    registry[field_name] = {}
+                # Store spec per event type (not merged!)
+                registry[field_name][event_type_id] = field_spec
         return registry
     
-    def _generate_sql_expression(self, field_spec: Dict[str, Any]) -> str:
+    def _field_needs_rand_column(self, field_spec: Dict[str, Any]) -> bool:
+        """Check if a field's weighted expression needs a shared rand column.
+        
+        Returns True for multi-value string/boolean fields with weights that
+        would otherwise suffer from the sequential-rand() bias.
+        """
+        if 'expr' in field_spec:
+            return False
+        field_type = field_spec.get('type')
+        if field_type not in ('string', 'boolean'):
+            return False
+        values = field_spec.get('values', [])
+        return len(values) > 1
+    
+    def _generate_sql_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
         """
         Generate SQL expression for field generation.
         
-        Supports: uuid(), CAST(rand()...) for int/float, CASE/WHEN for strings, current_timestamp()
+        Layered wrapping applied in order:
+        1. Core value expression (from type/values/range or raw expr)
+        2. Outlier injection (randomly replace with bad/edge-case values)
+        3. Null injection (randomly replace with NULL)
         
         Args:
             field_spec: Field specification with type and parameters
+            rand_col: Optional name of a pre-generated rand() column to use
+                      instead of inline rand() calls (fixes distribution bias)
             
         Returns:
             SQL expression string
         """
+        expr = self._generate_value_expression(field_spec, rand_col=rand_col)
+        
+        # Layer 1: Outlier injection (bad data for testing)
+        # Uses a two-level CASE so the total outlier rate is controlled by a
+        # single rand() gate, avoiding the sequential-rand() bias where each
+        # WHEN branch evaluates rand() independently.
+        outliers = field_spec.get('outliers', [])
+        if outliers:
+            total_outlier_pct = sum(o['percent'] for o in outliers)
+            if len(outliers) == 1:
+                expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {outliers[0]['expr']} ELSE {expr} END"
+            else:
+                inner = "CASE "
+                cumulative = 0.0
+                for outlier in outliers:
+                    cumulative += outlier['percent'] / total_outlier_pct
+                    inner += f"WHEN rand() < {cumulative} THEN {outlier['expr']} "
+                inner += f"ELSE {outliers[-1]['expr']} END"
+                expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {inner} ELSE {expr} END"
+        
+        # Layer 2: Null injection
+        percent_nulls = field_spec.get('percent_nulls', 0)
+        if percent_nulls and percent_nulls > 0:
+            expr = f"CASE WHEN rand() < {percent_nulls} THEN NULL ELSE {expr} END"
+        
+        return expr
+    
+    def _generate_value_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
+        """Generate the core value SQL expression (without null/outlier wrapping).
+        
+        If the field spec contains a raw 'expr' key, it is returned directly,
+        bypassing type-based generation. This allows arbitrary SQL expressions
+        in the config (e.g., concat('prefix_', uuid())).
+        
+        Args:
+            field_spec: Field specification with type and parameters
+            rand_col: Optional pre-generated rand column name. When provided,
+                      weighted CASE expressions reference this column instead of
+                      calling rand() per branch (fixing distribution bias).
+        """
+        # Raw expr passthrough: use the SQL expression directly
+        if 'expr' in field_spec:
+            return field_spec['expr']
+        
         field_type = field_spec.get('type')
         
         if field_type == 'uuid':
@@ -301,19 +483,28 @@ class StreamOrchestrator:
             values = field_spec.get('values', ['value'])
             weights = field_spec.get('weights')
             
+            # Single value: return literal directly
+            if len(values) == 1:
+                return f"'{values[0]}'"
+            
+            # Use shared rand column if provided, otherwise inline rand()
+            rand_ref = rand_col if rand_col else "rand()"
+            
             if weights:
+                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
+                total_weight = sum(weights)
                 cumulative = 0.0
                 sql_expr = "CASE "
                 for value, weight in zip(values, weights):
-                    cumulative += weight
-                    sql_expr += f"WHEN rand() < {cumulative} THEN '{value}' "
+                    cumulative += weight / total_weight
+                    sql_expr += f"WHEN {rand_ref} < {cumulative} THEN '{value}' "
                 sql_expr += f"ELSE '{values[-1]}' END"
                 return sql_expr
             else:
                 threshold = 1.0 / len(values)
                 sql_expr = "CASE "
                 for i, value in enumerate(values):
-                    sql_expr += f"WHEN rand() < {(i+1) * threshold} THEN '{value}' "
+                    sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN '{value}' "
                 sql_expr += f"ELSE '{values[-1]}' END"
                 return sql_expr
         
@@ -334,19 +525,28 @@ class StreamOrchestrator:
             values = field_spec.get('values', [True, False])
             weights = field_spec.get('weights')
             
+            # Single value: return literal directly
+            if len(values) == 1:
+                return 'true' if values[0] else 'false'
+            
+            # Use shared rand column if provided, otherwise inline rand()
+            rand_ref = rand_col if rand_col else "rand()"
+            
             if weights:
+                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
+                total_weight = sum(weights)
                 cumulative = 0.0
                 sql_expr = "CASE "
                 for value, weight in zip(values, weights):
-                    cumulative += weight
+                    cumulative += weight / total_weight
                     bool_str = 'true' if value else 'false'
-                    sql_expr += f"WHEN rand() < {cumulative} THEN {bool_str} "
+                    sql_expr += f"WHEN {rand_ref} < {cumulative} THEN {bool_str} "
                 bool_str = 'true' if values[-1] else 'false'
                 sql_expr += f"ELSE {bool_str} END"
                 return sql_expr
             else:
                 # Equal probability
-                return "CASE WHEN rand() < 0.5 THEN true ELSE false END"
+                return f"CASE WHEN {rand_ref} < 0.5 THEN true ELSE false END"
         
         elif field_type == 'long':
             min_val = field_spec.get('range', [0, 9223372036854775807])[0]
@@ -454,6 +654,9 @@ class StreamOrchestrator:
         """
         Process struct field by recursively generating nested fields.
         
+        For weighted multi-value sub-fields, adds a hidden _rand column
+        to avoid the sequential-rand() distribution bias.
+        
         Returns:
             tuple: (spec with struct fields added, struct_expr)
         """
@@ -480,8 +683,14 @@ class StreamOrchestrator:
                 struct_parts.append(f"'{sub_field_name}', {sub_array_expr}")
                 generated_columns.extend(sub_generated)
             else:
-                # Simple field
-                sub_sql = self._generate_sql_expression(sub_field_spec)
+                # Simple field -- use hidden rand column for weighted multi-value fields
+                rand_col_name = None
+                if self._field_needs_rand_column(sub_field_spec):
+                    rand_col_name = f"_rand_{sub_col_name}"
+                    spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
+                    generated_columns.append(rand_col_name)
+                
+                sub_sql = self._generate_sql_expression(sub_field_spec, rand_col=rand_col_name)
                 sub_spark_type = self._get_spark_type(sub_field_spec)
                 
                 # Add conditional generation
@@ -491,9 +700,13 @@ class StreamOrchestrator:
                 else:
                     conditional_sql = sub_sql
                 
+                base = [event_type_field]
+                if rand_col_name:
+                    base.append(rand_col_name)
+                
                 spec = spec.withColumn(sub_col_name, sub_spark_type,
                                      expr=conditional_sql,
-                                     baseColumn=event_type_field,
+                                     baseColumn=base,
                                      omit=True)
                 struct_parts.append(f"'{sub_field_name}', {sub_col_name}")
         
@@ -506,42 +719,51 @@ class StreamOrchestrator:
         """
         Process map field by generating discrete map values.
         
+        Uses a hidden rand column to avoid sequential-rand() bias
+        when multiple weighted map values are configured.
+        
         Returns:
-            tuple: (spec with map column added, map_expr)
+            tuple: (spec with map column added, map_expr, generated_cols)
         """
         values = field_spec.get('values', [])
         weights = field_spec.get('weights')
         
         if not values:
-            # Empty map by default
             key_type = field_spec.get('key_type', 'string')
             value_type = field_spec.get('value_type', 'string')
-            return spec, f"map()", []
+            return spec, "map()", []
         
-        # Generate map from discrete values
-        # values should be list of dicts: [{"key1": "val1"}, {"key2": "val2"}]
+        generated_cols = []
+        
+        # Add hidden rand column for weighted selection
+        if len(values) > 1:
+            rand_col_name = f"_rand_{field_name}"
+            spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
+            generated_cols.append(rand_col_name)
+            rand_ref = rand_col_name
+        else:
+            rand_ref = "rand()"
+        
         if weights:
+            total_weight = sum(weights)
             cumulative = 0.0
             sql_expr = "CASE "
             for value_dict, weight in zip(values, weights):
-                cumulative += weight
-                # Convert dict to map SQL
+                cumulative += weight / total_weight
                 map_pairs = [f"'{k}', '{v}'" for k, v in value_dict.items()]
-                sql_expr += f"WHEN rand() < {cumulative} THEN map({', '.join(map_pairs)}) "
-            # Last value
+                sql_expr += f"WHEN {rand_ref} < {cumulative} THEN map({', '.join(map_pairs)}) "
             map_pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(map_pairs)}) END"
         else:
-            # Equal probability for each map
             threshold = 1.0 / len(values)
             sql_expr = "CASE "
             for i, value_dict in enumerate(values):
                 map_pairs = [f"'{k}', '{v}'" for k, v in value_dict.items()]
-                sql_expr += f"WHEN rand() < {(i+1) * threshold} THEN map({', '.join(map_pairs)}) "
+                sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN map({', '.join(map_pairs)}) "
             map_pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(map_pairs)}) END"
         
-        return spec, sql_expr, []
+        return spec, sql_expr, generated_cols
     
     def _get_spark_type(self, field_spec: Dict[str, Any]) -> str:
         """Map field type to Spark SQL type string."""
