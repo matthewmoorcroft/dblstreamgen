@@ -1063,6 +1063,101 @@ user_id:
 
 ---
 
+## v0.2.0 Features
+
+### Outlier Injection
+
+Inject bad/edge-case values at configurable percentages for testing data quality pipelines:
+
+```yaml
+event_timestamp:
+  type: timestamp
+  outliers:
+    - percent: 0.025      # 2.5% future timestamps
+      expr: "current_timestamp() + INTERVAL '30' DAY"
+    - percent: 0.025      # 2.5% ancient timestamps
+      expr: "CAST('2019-01-01' AS TIMESTAMP)"
+```
+
+Outliers are applied **before** null injection, so the layering is:
+1. Core value generation
+2. Outlier injection (CASE WHEN rand() < percent THEN outlier_expr)
+3. Null injection (CASE WHEN rand() < percent_nulls THEN NULL)
+
+### Raw Expression Passthrough (`expr`)
+
+Use arbitrary SQL expressions for field values. When `expr` is present, it bypasses
+type-based generation entirely:
+
+```yaml
+# Generate 32-char hex session IDs
+firebase_session_id:
+  type: string
+  expr: "replace(uuid(), '-', '')"
+
+# Computed field with prefix
+tracking_code:
+  type: string
+  expr: "concat('TRK-', lpad(CAST(CAST(rand() * 999999 AS INT) AS STRING), 6, '0'))"
+```
+
+`expr` can be combined with `percent_nulls`:
+
+```yaml
+session_id:
+  type: string
+  expr: "replace(uuid(), '-', '')"
+  percent_nulls: 0.5    # 50% of rows will be NULL
+```
+
+### Derived Fields
+
+Fields that reference other generated columns. Added last to ensure all
+dependencies exist. Requires `expr`, `type`, and optionally `base_columns`:
+
+```yaml
+derived_fields:
+  received_timestamp:
+    type: timestamp
+    expr: "event_timestamp + CAST((rand() * 36000) AS INT) * INTERVAL '1' SECOND"
+    base_columns: ["event_timestamp"]
+
+  full_name:
+    type: string
+    expr: "concat(first_name, ' ', last_name)"
+    base_columns: ["first_name", "last_name"]
+```
+
+### Weighted Distribution Fix
+
+In v0.2.0, weighted multi-value fields use correct probability distributions:
+
+- **Common fields** (string/boolean with multiple values+weights): Use dbldatagen's
+  native `values`/`weights`/`random=True` for mathematically correct sampling.
+- **Conditional fields** and **struct sub-fields**: Use a hidden `_rand_{field}`
+  column to ensure a single random value is compared against cumulative thresholds,
+  eliminating the sequential-`rand()` bias from v0.1.x.
+- **Event type weights**: Now accept positive integers (e.g., `[6, 3, 1]` for
+  60%/30%/10%) instead of requiring floats that sum to 1.0.
+
+### Single-Value Optimization
+
+Fields with a single value now return a literal instead of a redundant CASE expression:
+
+```yaml
+# Returns literal 'ANDROID' directly (no CASE WHEN)
+platform:
+  type: string
+  values: ["ANDROID"]
+
+# Returns literal false directly
+is_fatal:
+  type: boolean
+  values: [false]
+```
+
+---
+
 ## Performance Considerations
 
 ### Type Impact on Performance
