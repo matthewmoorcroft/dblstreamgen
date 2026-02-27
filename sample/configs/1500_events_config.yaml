@@ -28,8 +28,7 @@ sink_config:
 
 common_fields:
   event_name:
-    type: string
-    # Automatically populated with event_type_id values
+    event_type_id: true
   
   event_key:
     type: string

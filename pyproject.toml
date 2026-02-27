@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dblstreamgen"
-version = "0.2.0"
+version = "0.3.0"
 description = "Databricks stream data generation for harness testing and performance validation"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -49,10 +49,14 @@ kafka = [
     "confluent-kafka>=2.0.0",
     "fastavro>=1.7.0",
 ]
+faker = [
+    "faker>=18.0.0",
+]
 all = [
     "boto3>=1.26.0",
     "confluent-kafka>=2.0.0",
     "fastavro>=1.7.0",
+    "faker>=18.0.0",
 ]
 dev = [
     "pytest>=7.0",

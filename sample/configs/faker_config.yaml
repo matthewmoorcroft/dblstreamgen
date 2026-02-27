@@ -1,0 +1,116 @@
+# dblstreamgen v0.3.0 - Faker Integration Example
+#
+# Demonstrates using Python Faker (via dbldatagen's fakerText) to generate
+# realistic data: names, addresses, emails, sentences, and more.
+#
+# Requires: pip install faker  (pre-installed on Databricks Runtime 13.3+)
+#
+# Usage:
+#   faker: "<method_name>"          -- calls Faker.<method_name>()
+#   faker_args:                     -- optional kwargs passed to the method
+#     nb_words: 8
+
+# ============================================================================
+# MAIN CONFIGURATION
+# ============================================================================
+
+generation_mode: "batch"
+
+batch_config:
+  total_rows: 10000
+  partitions: 8
+
+sink_config:
+  type: "delta"
+  table_name: "catalog.schema.faker_demo"
+  partition_key_field: "event_name"
+
+# ============================================================================
+# SCHEMA CONFIGURATION - Faker Examples
+# ============================================================================
+
+common_fields:
+  event_name:
+    event_type_id: true
+
+  event_id:
+    type: "uuid"
+
+  event_timestamp:
+    type: "timestamp"
+
+  # Faker-generated full name
+  customer_name:
+    type: "string"
+    faker: "name"
+
+  # Faker with arguments: generate a sentence of exactly 8 words
+  tagline:
+    type: "string"
+    faker: "sentence"
+    faker_args:
+      nb_words: 8
+
+  # Faker email
+  contact_email:
+    type: "string"
+    faker: "ascii_company_email"
+
+# ============================================================================
+# EVENT TYPES
+# ============================================================================
+
+event_types:
+  # Customer signup event with faker-generated address struct
+  - event_type_id: "customer.signup"
+    weight: 4
+    fields:
+      address:
+        type: "struct"
+        fields:
+          street:
+            type: "string"
+            faker: "street_address"
+          city:
+            type: "string"
+            faker: "city"
+          zip_code:
+            type: "string"
+            faker: "zipcode"
+      referral_source:
+        type: "string"
+        values: ["organic", "paid", "referral", "social"]
+        weights: [4, 3, 2, 1]
+
+  # Customer support event with faker-generated text body
+  - event_type_id: "support.ticket"
+    weight: 3
+    fields:
+      subject:
+        type: "string"
+        faker: "sentence"
+        faker_args:
+          nb_words: 6
+      body:
+        type: "string"
+        faker: "paragraph"
+        faker_args:
+          nb_sentences: 4
+      priority:
+        type: "string"
+        values: ["low", "medium", "high", "critical"]
+        weights: [4, 4, 2, 1]
+
+  # Profile update event mixing faker and static values
+  - event_type_id: "user.profile_update"
+    weight: 3
+    fields:
+      display_name:
+        type: "string"
+        faker: "user_name"
+      bio:
+        type: "string"
+        faker: "text"
+        faker_args:
+          max_nb_chars: 200
+        percent_nulls: 0.3

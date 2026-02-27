@@ -50,8 +50,7 @@ sink_config:
 # These match the customer's bronze ingest expectations
 common_fields:
   event_name:
-    type: "string"  # Event type identifier (extracted in bronze as payload:event_name)
-    # Note: Automatically populated with event_type_id values from event_types
+    event_type_id: true  # Maps to event_type_id values from event_types
   
   event_key:
     type: "string"  # Partition key for Kinesis (extracted in bronze as payload:event_key)
@@ -71,7 +70,7 @@ common_fields:
 # Event type definitions with weights (must sum to 1.0)
 event_types:
   # Page view events (60% of traffic)
-  - event_type_id: "user.page_view"  # Internal identifier, gets written to event_name field
+  - event_type_id: "user.page_view"  # Maps to event_name via event_type_id: true
     weight: 0.60
     fields:
       page_url:

@@ -271,6 +271,32 @@ display(event_distribution_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Tip: Faker Integration (v0.3.0)
+# MAGIC
+# MAGIC Generate realistic data using Python Faker instead of fixed value lists.
+# MAGIC Requires `pip install faker` (pre-installed on Databricks Runtime 13.3+).
+# MAGIC
+# MAGIC ```yaml
+# MAGIC # In your YAML config, use faker on any string field:
+# MAGIC common_fields:
+# MAGIC   customer_name:
+# MAGIC     type: string
+# MAGIC     faker: "name"          # generates realistic full names
+# MAGIC   contact_email:
+# MAGIC     type: string
+# MAGIC     faker: "ascii_company_email"
+# MAGIC   tagline:
+# MAGIC     type: string
+# MAGIC     faker: "sentence"
+# MAGIC     faker_args:
+# MAGIC       nb_words: 8
+# MAGIC ```
+# MAGIC
+# MAGIC See `sample/configs/faker_config.yaml` for a complete example.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Step 11: Stop Streams
 # MAGIC
 # MAGIC When done, stop the write stream. The display query will stop automatically when you stop the cell.

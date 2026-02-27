@@ -105,6 +105,15 @@ class Config:
         
         # Validate field type consistency across event types
         self._validate_field_type_consistency()
+        
+        # Validate faker fields
+        self._validate_faker_fields()
+        
+        # Validate reserved field names
+        self._validate_reserved_field_names()
+        
+        # Validate event_type_id flag usage
+        self._validate_event_type_id_fields()
     
     def _validate_field_types(self):
         """Validate all field types are supported."""
@@ -116,6 +125,8 @@ class Config:
         
         # Check common fields
         for field_name, field_spec in self.data.get('common_fields', {}).items():
+            if field_spec.get('event_type_id'):
+                continue
             field_type = field_spec.get('type')
             if field_type not in supported_types:
                 raise ConfigurationError(
@@ -273,6 +284,100 @@ class Config:
                 else:
                     field_registry[field_name] = (field_spec, event_id)
     
+    def _collect_struct_faker_specs(self, parent_spec: dict, parent_path: str, all_specs: list):
+        """Recursively collect field specs from struct sub-fields for faker validation."""
+        for sub_name, sub_spec in parent_spec.get('fields', {}).items():
+            path = f"{parent_path}.{sub_name}"
+            all_specs.append((path, sub_spec))
+            if sub_spec.get('type') == 'struct':
+                self._collect_struct_faker_specs(sub_spec, path, all_specs)
+
+    def _validate_faker_fields(self):
+        """Validate faker configuration across all field specs."""
+        all_specs: list = []
+        for name, spec in self.data.get('common_fields', {}).items():
+            all_specs.append((f"common_fields.{name}", spec))
+            if spec.get('type') == 'struct':
+                self._collect_struct_faker_specs(spec, f"common_fields.{name}", all_specs)
+
+        for et in self.data['event_types']:
+            et_id = et['event_type_id']
+            for name, spec in et.get('fields', {}).items():
+                all_specs.append((f"{et_id}.fields.{name}", spec))
+                if spec.get('type') == 'struct':
+                    self._collect_struct_faker_specs(spec, f"{et_id}.fields.{name}", all_specs)
+
+        for location, spec in all_specs:
+            if 'faker' not in spec:
+                continue
+            if spec.get('type') != 'string':
+                raise ConfigurationError(
+                    f"{location}: 'faker' requires type 'string', got '{spec.get('type')}'"
+                )
+            conflicts = [k for k in ('values', 'range', 'expr') if k in spec]
+            if conflicts:
+                raise ConfigurationError(
+                    f"{location}: 'faker' is mutually exclusive with {conflicts}"
+                )
+            if not isinstance(spec['faker'], str) or not spec['faker']:
+                raise ConfigurationError(
+                    f"{location}: 'faker' must be a non-empty string (Python Faker method name)"
+                )
+            faker_args = spec.get('faker_args')
+            if faker_args is not None and not isinstance(faker_args, dict):
+                raise ConfigurationError(
+                    f"{location}: 'faker_args' must be a dict of kwargs for the Faker method"
+                )
+
+    def _validate_reserved_field_names(self):
+        """Validate that no user-defined field names collide with internal column names."""
+        reserved = {'__dsg_id', '__dsg_event_type_id'}
+        reserved_prefixes = ('__dsg_faker_', '__dsg_rand_')
+
+        def _check(name, location):
+            if name in reserved or any(name.startswith(p) for p in reserved_prefixes):
+                raise ConfigurationError(
+                    f"{location}: '{name}' is a reserved internal column name. "
+                    f"Reserved names: {reserved}, reserved prefixes: {list(reserved_prefixes)}"
+                )
+
+        for name in self.data.get('common_fields', {}):
+            _check(name, f"common_fields.{name}")
+        for et in self.data['event_types']:
+            et_id = et['event_type_id']
+            for name in et.get('fields', {}):
+                _check(name, f"{et_id}.fields.{name}")
+        for name in self.data.get('derived_fields', {}):
+            _check(name, f"derived_fields.{name}")
+
+    def _validate_event_type_id_fields(self):
+        """Validate event_type_id: true flag usage."""
+        for name, spec in self.data.get('common_fields', {}).items():
+            if not spec.get('event_type_id'):
+                continue
+            conflicts = [k for k in ('values', 'range', 'expr', 'faker') if k in spec]
+            if conflicts:
+                raise ConfigurationError(
+                    f"common_fields.{name}: 'event_type_id: true' is mutually exclusive "
+                    f"with {conflicts}"
+                )
+
+        # event_type_id flag is only valid in common_fields
+        for et in self.data['event_types']:
+            et_id = et['event_type_id']
+            for name, spec in et.get('fields', {}).items():
+                if spec.get('event_type_id'):
+                    raise ConfigurationError(
+                        f"{et_id}.fields.{name}: 'event_type_id: true' is only valid in "
+                        f"common_fields (event type is already known within event_types)"
+                    )
+        for name, spec in self.data.get('derived_fields', {}).items():
+            if spec.get('event_type_id'):
+                raise ConfigurationError(
+                    f"derived_fields.{name}: 'event_type_id: true' is only valid in "
+                    f"common_fields"
+                )
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get configuration value with dot notation support.
