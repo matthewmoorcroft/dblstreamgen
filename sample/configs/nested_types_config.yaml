@@ -27,7 +27,7 @@ sink_config:
 
 common_fields:
   event_name:
-    type: "string"
+    event_type_id: true
   
   event_id:
     type: "uuid"
@@ -75,22 +75,22 @@ event_types:
   - event_type_id: "user.profile_update"
     weight: 0.30
     fields:
-      # Nested struct - user profile
+      # Nested struct - user profile (faker-generated names and email)
       profile:
         type: "struct"
         fields:
           first_name:
             type: "string"
-            values: ["Alice", "Bob", "Charlie", "Diana", "Eve"]
+            faker: "first_name"
           last_name:
             type: "string"
-            values: ["Smith", "Johnson", "Williams", "Brown", "Jones"]
+            faker: "last_name"
           age:
             type: "int"
             range: [18, 75]
           email:
             type: "string"
-            values: ["user@example.com", "test@demo.com", "contact@site.com"]
+            faker: "ascii_company_email"
           preferences:
             type: "struct"
             fields:

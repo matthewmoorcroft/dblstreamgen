@@ -28,6 +28,7 @@
 **Key Features:**
 - **Config-driven** - Define schemas in YAML with no code required
 - **dbldatagen-powered** - Leverages Spark for scale
+- **Faker integration** - Realistic names, addresses, emails via Python Faker (v0.3.0)
 - **Multiple event types** - Wide schema approach for 1500+ types
 - **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta
 - **Use-case agnostic** - Works for any domain
@@ -72,7 +73,7 @@ make build              # Build wheel
 make release-patch      # Full release workflow
 ```
 
-**Output:** `dist/dblstreamgen-0.2.0-py3-none-any.whl`
+**Output:** `dist/dblstreamgen-0.3.0-py3-none-any.whl`
 
 For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
 
@@ -87,14 +88,14 @@ For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD
 CREATE VOLUME IF NOT EXISTS catalog.schema.libraries;
 
 # Upload the wheel using Databricks UI or CLI
-# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
+# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
 ```
 
 #### Step 2: Install in Notebook
 
 ```python
 # Install the library
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
 
 # Restart Python to load the library
 dbutils.library.restartPython()
@@ -123,7 +124,7 @@ Copy these cells into a Databricks notebook or see the complete example at `samp
 **Cell 1 - Install:**
 ```python
 # Install from Unity Catalog volume
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
 dbutils.library.restartPython()
 ```
 
@@ -188,7 +189,7 @@ We provide a complete example configuration in `sample/configs/simple_config.yam
 ```yaml
 # Key sections from simple_config.yaml:
 common_fields:
-  event_name: {type: "string"}       # Event type identifier
+  event_name: {event_type_id: true}  # Maps to event_type_id values
   event_key: {type: "string", values: [...]}  # Partition key
   event_timestamp: {type: "timestamp"}
   event_id: {type: "uuid"}
@@ -523,7 +524,7 @@ event_types:
 
 ### Field Types
 
-dblstreamgen supports **13 data types** including simple primitives and complex nested structures:
+dblstreamgen supports **13 data types** plus **Faker-powered text generation**, including simple primitives and complex nested structures:
 
 #### Simple Types
 
@@ -531,6 +532,7 @@ dblstreamgen supports **13 data types** including simple primitives and complex 
 |------|--------------|---------|----------|
 | `uuid` | None | `event_id: {type: "uuid"}` | Unique identifiers |
 | `string` | `values: [...]`, `weights: [...]` | `device: {type: "string", values: ["iOS", "Android"]}` | Categories, enums |
+| `string` + faker | `faker: "<method>"`, `faker_args: {...}` | `name: {type: "string", faker: "name"}` | Realistic text (v0.3.0) |
 | `int` | `range: [min, max]` | `quantity: {type: "int", range: [1, 100]}` | Counts, small IDs |
 | `long` | `range: [min, max]` | `transaction_id: {type: "long", range: [1000000000, 9999999999]}` | Large IDs |
 | `short` | `range: [min, max]` | `port: {type: "short", range: [1024, 65535]}` | Small integers |
@@ -585,12 +587,24 @@ tags:
   values: ["urgent", "normal", "low"]
   num_features: [1, 4]  # 1-4 tags
 
+# Faker-generated realistic name (v0.3.0)
+customer_name:
+  type: string
+  faker: "name"
+
+# Faker with arguments
+tagline:
+  type: string
+  faker: "sentence"
+  faker_args:
+    nb_words: 8
+
 # Nested struct
 address:
   type: struct
   fields:
-    street: {type: string, values: ["123 Main St"]}
-    city: {type: string, values: ["NYC", "LA"]}
+    street: {type: string, faker: "street_address"}
+    city: {type: string, faker: "city"}
     zip: {type: int, range: [10000, 99999]}
 
 # Map
@@ -610,7 +624,7 @@ Fields shared across all event types (from simple_config.yaml):
 ```yaml
 common_fields:
   event_name:
-    type: "string"  # Automatically populated with event_type_id
+    event_type_id: true  # Maps to event_type_id values from event_types
   event_key:
     type: "string"
     values: ["user_1", "user_2", "user_3", "user_4", "user_5"]
@@ -667,7 +681,7 @@ For scale testing with 1500+ event types, see `sample/configs/1500_events_config
 
 ```python
 # Make sure the wheel is installed
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.2.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
 
 # Restart Python
 dbutils.library.restartPython()
@@ -789,16 +803,16 @@ sink_config:
 ### Configuration Examples
 - **Basic Example**: `sample/configs/simple_config.yaml` - Simple types, web analytics pattern
 - **Extended Types**: `sample/configs/extended_types_config.yaml` - All simple types (boolean, long, double, date, etc.)
-- **Nested Types**: `sample/configs/nested_types_config.yaml` - Complex types (array, struct, map)
+- **Nested Types**: `sample/configs/nested_types_config.yaml` - Complex types (array, struct, map) with Faker
+- **Faker Integration**: `sample/configs/faker_config.yaml` - Realistic data via Python Faker (v0.3.0)
 - **Stress Test**: `sample/configs/1500_events_config.yaml` - 1500+ event types at scale
 
 ### Notebooks
 - **Quick Start**: `sample/notebooks/01_simple_example.py` - End-to-end Kinesis + Delta examples
 
-### Type System
-- **Complete Type Reference**: `docs/TYPE_SYSTEM.md` - All 13 supported types with examples
-- **Simple Types**: uuid, string, int, long, short, byte, float, double, decimal, boolean, timestamp, date, binary
-- **Complex Types**: array, struct, map (with nesting support)
+### YAML Configuration
+- **YAML Config Reference**: `docs/YAML_CONFIG_REFERENCE.md` - Complete schema spec for building configs (LLM-friendly)
+- **Type System Reference**: `docs/TYPE_SYSTEM.md` - All 13 supported types plus Faker with examples
 
 ### v0.2.0 Features
 - **Outlier Injection**: Configure bad data percentages per field for data quality testing

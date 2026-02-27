@@ -27,7 +27,7 @@ sink_config:
 common_fields:
   # Standard types
   event_name:
-    type: "string"
+    event_type_id: true
   
   event_id:
     type: "uuid"

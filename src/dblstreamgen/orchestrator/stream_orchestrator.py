@@ -82,12 +82,9 @@ class StreamOrchestrator:
         
         # Handle serialization modes differently
         if serialize:
-            # Kinesis/Kafka mode: Serialize to JSON (internal columns excluded from JSON)
             df = self._serialize_wide_schema(df)
         else:
-            # Parquet/Delta mode: Return wide schema, drop internal columns
-            internal_columns = [col for col in df.columns if col.startswith('_')]
-            df = df.drop(*internal_columns)
+            pass  # omit=True on internal columns handles exclusion at build time
 
         # Log creation with format type
         rates = self.calculate_rates()
@@ -109,12 +106,12 @@ class StreamOrchestrator:
         Get the internal event type discriminator field name.
 
         This is an INTERNAL field used for conditional logic only.
-        It is prefixed with underscore and dropped before output.
+        It uses the __dsg_ prefix to avoid collision with user-defined columns.
 
         Returns:
-            '_event_type_id' - internal discriminator column
+            '__dsg_event_type_id' - internal discriminator column
         """
-        return '_event_type_id'
+        return '__dsg_event_type_id'
     
     def _build_complete_spec(self) -> dg.DataGenerator:
         """Build complete dbldatagen spec with all fields."""
@@ -137,7 +134,7 @@ class StreamOrchestrator:
             spec = dg.DataGenerator(sparkSession=self.spark, name="base_batch", 
                                    rows=total_rows, partitions=partitions)
         
-        return spec.withColumn("_id", "long", minValue=0, maxValue=1000000000, random=True)
+        return spec.withColumn("__dsg_id", "long", minValue=0, maxValue=1000000000, random=True, omit=True)
     
     def _add_event_type_id_to_spec(self, spec) -> dg.DataGenerator:
         """Add event type column with weighted distribution using dbldatagen."""
@@ -145,7 +142,7 @@ class StreamOrchestrator:
         weights = [et['weight'] for et in self.config.data['event_types']]
         event_type_field = self._get_event_type_field_name()
         
-        return spec.withColumn(event_type_field, "string", values=event_ids, weights=weights, random=True)
+        return spec.withColumn(event_type_field, "string", values=event_ids, weights=weights, random=True, omit=True)
     
     def _build_dataframe_from_spec(self, spec) -> DataFrame:
         """Build DataFrame from complete spec."""
@@ -173,6 +170,14 @@ class StreamOrchestrator:
             
             field_type_name = field_spec.get('type')
             
+            # Map to internal _event_type_id via baseColumn
+            if field_spec.get('event_type_id'):
+                spec = spec.withColumn(
+                    field_name, "string",
+                    expr=event_type_field, baseColumn=event_type_field
+                )
+                continue
+            
             # Handle nested types in common fields
             if field_type_name == 'array':
                 spec, array_expr, generated_cols = self._process_array_field(
@@ -195,6 +200,12 @@ class StreamOrchestrator:
                 field_type = self._get_spark_type(field_spec)
                 spec = spec.withColumn(field_name, field_type, expr=map_expr)
             
+            elif 'faker' in field_spec:
+                spec, hidden_col = self._add_faker_hidden_column(spec, field_name, field_spec)
+                sql_expr = self._generate_sql_expression(field_spec, faker_col=hidden_col)
+                field_type = self._get_spark_type(field_spec)
+                spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=hidden_col)
+            
             elif self._can_use_native_weights(field_spec):
                 # Use dbldatagen native values/weights for correct distribution
                 spec = self._add_native_weighted_field(spec, field_name, field_spec)
@@ -210,17 +221,20 @@ class StreamOrchestrator:
     def _can_use_native_weights(self, field_spec: Dict[str, Any]) -> bool:
         """Check if a field can use dbldatagen's native values/weights instead of SQL CASE.
         
-        Native weights are correct for multi-value string/boolean fields when:
+        Native weights work for any type when:
         - No raw expr passthrough
         - No outliers (native doesn't support layered outlier injection)
-        - Has multiple values
+        - No faker (handled separately)
+        - Has multiple explicit values
+        
+        dbldatagen's values parameter accepts strings, numbers, booleans, and
+        constants conforming to the column type.
         """
         if 'expr' in field_spec:
             return False
         if field_spec.get('outliers'):
             return False
-        field_type = field_spec.get('type')
-        if field_type not in ('string', 'boolean'):
+        if 'faker' in field_spec:
             return False
         values = field_spec.get('values', [])
         return len(values) > 1
@@ -306,25 +320,37 @@ class StreamOrchestrator:
 
             else:
                 # Simple field types - build CASE with separate WHEN per event type
-                # For weighted multi-value fields, add a hidden rand column to avoid
-                # the sequential-rand() bias where each WHEN branch evaluates rand()
-                # independently (causing skewed distributions).
                 needs_rand_col = any(
                     self._field_needs_rand_column(fs) for fs in event_type_specs.values()
                 )
-                rand_col_name = f"_rand_{field_name}"
+                rand_col_name = f"__dsg_rand_{field_name}"
                 base_cols = [event_type_field]
 
                 if needs_rand_col:
                     spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
                     base_cols.append(rand_col_name)
 
+                # Generate hidden faker columns for any event-type spec that uses faker.
+                # Each event type gets its own hidden column to avoid collisions.
+                faker_hidden_map: Dict[str, str] = {}
+                for event_type_id, field_spec in event_type_specs.items():
+                    if 'faker' in field_spec:
+                        safe_et_id = event_type_id.replace('.', '_')
+                        hidden_name = f"__dsg_faker_{field_name}_{safe_et_id}"
+                        text_gen = self._build_faker_text_generator(field_spec)
+                        spec = spec.withColumn(hidden_name, "string", text=text_gen, omit=True)
+                        faker_hidden_map[event_type_id] = hidden_name
+                        base_cols.append(hidden_name)
+
                 sql_expr = "CASE "
                 field_type = None
 
                 for event_type_id, field_spec in event_type_specs.items():
+                    faker_col = faker_hidden_map.get(event_type_id)
                     field_sql = self._generate_sql_expression(
-                        field_spec, rand_col=rand_col_name if needs_rand_col else None
+                        field_spec,
+                        rand_col=rand_col_name if needs_rand_col else None,
+                        faker_col=faker_col,
                     )
                     sql_expr += f"WHEN {event_type_field} = '{event_type_id}' THEN {field_sql} "
 
@@ -389,26 +415,56 @@ class StreamOrchestrator:
                 registry[field_name][event_type_id] = field_spec
         return registry
     
+    def _build_faker_text_generator(self, field_spec: Dict[str, Any]):
+        """Create a dbldatagen PyfuncText from a faker field spec.
+        
+        Uses fakerText() which wraps Python Faker as a Pandas UDF.
+        Raises ImportError with an actionable message if faker is not installed.
+        """
+        try:
+            from dbldatagen import fakerText
+        except ImportError:
+            raise ImportError(
+                "faker is required for 'faker' fields. "
+                "Install it with: pip install faker  "
+                "(pre-installed on Databricks Runtime 13.3+)"
+            )
+        method = field_spec['faker']
+        args = field_spec.get('faker_args', {})
+        return fakerText(method, **args)
+
+    def _add_faker_hidden_column(self, spec, field_name: str, field_spec: Dict[str, Any]):
+        """Generate a hidden faker column (omit=True) and return (spec, column_name).
+        
+        The hidden column holds UDF-generated Faker values that can later be
+        referenced by name in SQL expressions for composition with outliers,
+        percent_nulls, and CASE WHEN logic.
+        """
+        hidden_name = f"__dsg_faker_{field_name}"
+        text_gen = self._build_faker_text_generator(field_spec)
+        spec = spec.withColumn(hidden_name, "string", text=text_gen, omit=True)
+        return spec, hidden_name
+
     def _field_needs_rand_column(self, field_spec: Dict[str, Any]) -> bool:
         """Check if a field's weighted expression needs a shared rand column.
         
-        Returns True for multi-value string/boolean fields with weights that
-        would otherwise suffer from the sequential-rand() bias.
+        Returns True for any multi-value field that will generate a CASE WHEN
+        expression, to avoid the sequential-rand() bias where each WHEN branch
+        evaluates rand() independently.
         """
         if 'expr' in field_spec:
             return False
-        field_type = field_spec.get('type')
-        if field_type not in ('string', 'boolean'):
+        if 'faker' in field_spec:
             return False
         values = field_spec.get('values', [])
         return len(values) > 1
     
-    def _generate_sql_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
+    def _generate_sql_expression(self, field_spec: Dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
         """
         Generate SQL expression for field generation.
         
         Layered wrapping applied in order:
-        1. Core value expression (from type/values/range or raw expr)
+        1. Core value expression (from type/values/range, raw expr, or faker hidden col)
         2. Outlier injection (randomly replace with bad/edge-case values)
         3. Null injection (randomly replace with NULL)
         
@@ -416,11 +472,12 @@ class StreamOrchestrator:
             field_spec: Field specification with type and parameters
             rand_col: Optional name of a pre-generated rand() column to use
                       instead of inline rand() calls (fixes distribution bias)
+            faker_col: Optional hidden column name containing Faker-generated values
             
         Returns:
             SQL expression string
         """
-        expr = self._generate_value_expression(field_spec, rand_col=rand_col)
+        expr = self._generate_value_expression(field_spec, rand_col=rand_col, faker_col=faker_col)
         
         # Layer 1: Outlier injection (bad data for testing)
         # Uses a two-level CASE so the total outlier rate is controlled by a
@@ -447,25 +504,90 @@ class StreamOrchestrator:
         
         return expr
     
-    def _generate_value_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
+    def _format_sql_literal(self, value, field_spec: Dict[str, Any]) -> str:
+        """Format a Python value as a SQL literal appropriate for the field type."""
+        field_type = field_spec.get('type')
+        if field_type == 'string':
+            return f"'{value}'"
+        elif field_type == 'boolean':
+            return 'true' if value else 'false'
+        elif field_type in ('int', 'long', 'short', 'byte'):
+            return str(int(value))
+        elif field_type in ('float', 'double'):
+            return str(float(value))
+        elif field_type == 'decimal':
+            precision = field_spec.get('precision', 10)
+            scale = field_spec.get('scale', 2)
+            return f"CAST({value} AS DECIMAL({precision},{scale}))"
+        elif field_type == 'timestamp':
+            return f"TIMESTAMP '{value}'"
+        elif field_type == 'date':
+            return f"DATE '{value}'"
+        else:
+            return str(value)
+
+    def _generate_values_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
+        """Generate a SQL CASE expression selecting from an explicit values list.
+        
+        Works for any type — the only difference is how literals are formatted,
+        which is handled by _format_sql_literal.
+        """
+        values = field_spec['values']
+        weights = field_spec.get('weights')
+
+        if len(values) == 1:
+            return self._format_sql_literal(values[0], field_spec)
+
+        rand_ref = rand_col if rand_col else "rand()"
+
+        if weights:
+            total_weight = sum(weights)
+            cumulative = 0.0
+            sql_expr = "CASE "
+            for value, weight in zip(values, weights):
+                cumulative += weight / total_weight
+                sql_expr += f"WHEN {rand_ref} < {cumulative} THEN {self._format_sql_literal(value, field_spec)} "
+            sql_expr += f"ELSE {self._format_sql_literal(values[-1], field_spec)} END"
+            return sql_expr
+        else:
+            threshold = 1.0 / len(values)
+            sql_expr = "CASE "
+            for i, value in enumerate(values):
+                sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN {self._format_sql_literal(value, field_spec)} "
+            sql_expr += f"ELSE {self._format_sql_literal(values[-1], field_spec)} END"
+            return sql_expr
+
+    def _generate_value_expression(self, field_spec: Dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
         """Generate the core value SQL expression (without null/outlier wrapping).
         
-        If the field spec contains a raw 'expr' key, it is returned directly,
-        bypassing type-based generation. This allows arbitrary SQL expressions
-        in the config (e.g., concat('prefix_', uuid())).
+        Resolution order:
+        1. Raw 'expr' passthrough — arbitrary SQL from config
+        2. Faker hidden column reference
+        3. Explicit 'values' list — works for ALL types (string, int, float, etc.)
+        4. Type-specific default generation (range for numerics, begin/end for dates, etc.)
         
         Args:
             field_spec: Field specification with type and parameters
             rand_col: Optional pre-generated rand column name. When provided,
                       weighted CASE expressions reference this column instead of
                       calling rand() per branch (fixing distribution bias).
+            faker_col: Optional hidden column name containing Faker values.
+                       When provided, returns this column reference as the core expression.
         """
-        # Raw expr passthrough: use the SQL expression directly
         if 'expr' in field_spec:
             return field_spec['expr']
         
+        if faker_col:
+            return faker_col
+        
         field_type = field_spec.get('type')
         
+        # Explicit values list — universal handler for all types.
+        # Types that never use values (uuid, binary) are excluded.
+        if 'values' in field_spec and field_type not in ('uuid', 'binary'):
+            return self._generate_values_expression(field_spec, rand_col=rand_col)
+        
+        # Type-specific default generation (no explicit values provided)
         if field_type == 'uuid':
             return "uuid()"
         
@@ -480,73 +602,20 @@ class StreamOrchestrator:
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS FLOAT)"
         
         elif field_type == 'string':
-            values = field_spec.get('values', ['value'])
-            weights = field_spec.get('weights')
-            
-            # Single value: return literal directly
-            if len(values) == 1:
-                return f"'{values[0]}'"
-            
-            # Use shared rand column if provided, otherwise inline rand()
-            rand_ref = rand_col if rand_col else "rand()"
-            
-            if weights:
-                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
-                total_weight = sum(weights)
-                cumulative = 0.0
-                sql_expr = "CASE "
-                for value, weight in zip(values, weights):
-                    cumulative += weight / total_weight
-                    sql_expr += f"WHEN {rand_ref} < {cumulative} THEN '{value}' "
-                sql_expr += f"ELSE '{values[-1]}' END"
-                return sql_expr
-            else:
-                threshold = 1.0 / len(values)
-                sql_expr = "CASE "
-                for i, value in enumerate(values):
-                    sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN '{value}' "
-                sql_expr += f"ELSE '{values[-1]}' END"
-                return sql_expr
+            return "'value'"
         
         elif field_type == 'timestamp':
             begin = field_spec.get('begin')
             end = field_spec.get('end')
             
             if begin and end:
-                # Generate timestamp within range
-                # Convert to unix timestamp, generate random value, convert back
                 return f"from_unixtime(unix_timestamp('{begin}') + rand() * (unix_timestamp('{end}') - unix_timestamp('{begin}')))"
             else:
-                # Default: current timestamp
                 return "current_timestamp()"
         
         elif field_type == 'boolean':
-            # Support values with weights for probability
-            values = field_spec.get('values', [True, False])
-            weights = field_spec.get('weights')
-            
-            # Single value: return literal directly
-            if len(values) == 1:
-                return 'true' if values[0] else 'false'
-            
-            # Use shared rand column if provided, otherwise inline rand()
             rand_ref = rand_col if rand_col else "rand()"
-            
-            if weights:
-                # Normalize integer weights to cumulative probabilities (0.0 - 1.0)
-                total_weight = sum(weights)
-                cumulative = 0.0
-                sql_expr = "CASE "
-                for value, weight in zip(values, weights):
-                    cumulative += weight / total_weight
-                    bool_str = 'true' if value else 'false'
-                    sql_expr += f"WHEN {rand_ref} < {cumulative} THEN {bool_str} "
-                bool_str = 'true' if values[-1] else 'false'
-                sql_expr += f"ELSE {bool_str} END"
-                return sql_expr
-            else:
-                # Equal probability
-                return f"CASE WHEN {rand_ref} < 0.5 THEN true ELSE false END"
+            return f"CASE WHEN {rand_ref} < 0.5 THEN true ELSE false END"
         
         elif field_type == 'long':
             min_val = field_spec.get('range', [0, 9223372036854775807])[0]
@@ -559,10 +628,8 @@ class StreamOrchestrator:
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS DOUBLE)"
         
         elif field_type == 'date':
-            # Support begin/end like timestamp
             begin = field_spec.get('begin', '2020-01-01')
             end = field_spec.get('end', '2024-12-31')
-            # Generate date within range using unix timestamp
             return f"to_date(from_unixtime(unix_timestamp('{begin}') + rand() * (unix_timestamp('{end}') - unix_timestamp('{begin}'))))"
         
         elif field_type == 'decimal':
@@ -583,8 +650,6 @@ class StreamOrchestrator:
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS SMALLINT)"
         
         elif field_type == 'binary':
-            # Binary type - generate as hex string then convert
-            # Use uuid as default binary data
             return "unhex(replace(uuid(), '-', ''))"
         
         else:
@@ -613,13 +678,14 @@ class StreamOrchestrator:
             element_col_name = f"{field_name}_elem_{i}"
             element_columns.append(element_col_name)
             
-            # Create field spec for array element
-            element_spec = {
-                'type': item_type,
-                'values': values if values else None,
-                'range': field_spec.get('range'),
-                'weights': field_spec.get('weights')
-            }
+            # Create field spec for array element (omit None values so defaults apply)
+            element_spec = {'type': item_type}
+            if values:
+                element_spec['values'] = values
+            if field_spec.get('range') is not None:
+                element_spec['range'] = field_spec['range']
+            if field_spec.get('weights') is not None:
+                element_spec['weights'] = field_spec['weights']
             
             # Generate SQL for element
             element_sql = self._generate_sql_expression(element_spec)
@@ -666,7 +732,6 @@ class StreamOrchestrator:
         
         for sub_field_name, sub_field_spec in struct_fields.items():
             sub_col_name = f"{field_name}_{sub_field_name}"
-            generated_columns.append(sub_col_name)
             sub_field_type = sub_field_spec.get('type')
             
             # Recursively handle nested types
@@ -683,14 +748,21 @@ class StreamOrchestrator:
                 struct_parts.append(f"'{sub_field_name}', {sub_array_expr}")
                 generated_columns.extend(sub_generated)
             else:
-                # Simple field -- use hidden rand column for weighted multi-value fields
+                # Simple (leaf) field -- only these create an actual column with sub_col_name
+                generated_columns.append(sub_col_name)
                 rand_col_name = None
-                if self._field_needs_rand_column(sub_field_spec):
-                    rand_col_name = f"_rand_{sub_col_name}"
+                faker_col_name = None
+                if 'faker' in sub_field_spec:
+                    spec, faker_col_name = self._add_faker_hidden_column(spec, sub_col_name, sub_field_spec)
+                    generated_columns.append(faker_col_name)
+                elif self._field_needs_rand_column(sub_field_spec):
+                    rand_col_name = f"__dsg_rand_{sub_col_name}"
                     spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
                     generated_columns.append(rand_col_name)
                 
-                sub_sql = self._generate_sql_expression(sub_field_spec, rand_col=rand_col_name)
+                sub_sql = self._generate_sql_expression(
+                    sub_field_spec, rand_col=rand_col_name, faker_col=faker_col_name
+                )
                 sub_spark_type = self._get_spark_type(sub_field_spec)
                 
                 # Add conditional generation
@@ -703,6 +775,8 @@ class StreamOrchestrator:
                 base = [event_type_field]
                 if rand_col_name:
                     base.append(rand_col_name)
+                if faker_col_name:
+                    base.append(faker_col_name)
                 
                 spec = spec.withColumn(sub_col_name, sub_spark_type,
                                      expr=conditional_sql,
@@ -737,7 +811,7 @@ class StreamOrchestrator:
         
         # Add hidden rand column for weighted selection
         if len(values) > 1:
-            rand_col_name = f"_rand_{field_name}"
+            rand_col_name = f"__dsg_rand_{field_name}"
             spec = spec.withColumn(rand_col_name, "float", expr="rand()", omit=True)
             generated_cols.append(rand_col_name)
             rand_ref = rand_col_name
@@ -825,9 +899,12 @@ class StreamOrchestrator:
         - partition_key: Top-level column for Kinesis routing
         - data: Flat JSON with ALL fields (goes into Kinesis Data field)
         """
-        # Default partition key is the event type field name
-        default_partition_key = self._get_event_type_field_name()
-        partition_key_field = self.config.data['sink_config'].get('partition_key_field', default_partition_key)
+        partition_key_field = self.config.data['sink_config'].get('partition_key_field')
+        if not partition_key_field:
+            raise ValueError(
+                "sink_config.partition_key_field is required for serialized output. "
+                "Set it to a visible column name (e.g., 'event_name')."
+            )
         
         timestamp_field = 'event_timestamp' if 'event_timestamp' in df.columns else None
         if not timestamp_field:
@@ -842,8 +919,7 @@ class StreamOrchestrator:
         if partition_key_field not in df.columns:
             raise ValueError(f"Partition key field '{partition_key_field}' not found in DataFrame")
         
-        # Create flat JSON with all fields except internal _id
-        payload_cols = [c for c in df.columns if c != '_id']
+        payload_cols = list(df.columns)
         
         df_serialized = df.withColumn("data",
             to_json(struct(*[col(c) for c in payload_cols]), {"ignoreNullFields": "true"}))

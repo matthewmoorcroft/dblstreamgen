@@ -1,13 +1,13 @@
 # dblstreamgen Type System Reference
 
-**Version:** 0.2.0  
+**Version:** 0.3.0  
 **Last Updated:** February 2026
 
 ---
 
 ## Overview
 
-dblstreamgen supports **13 data types** covering simple primitives, complex nested structures, and specialized types. This document provides comprehensive reference for all supported types with YAML configuration examples.
+dblstreamgen supports **13 data types** plus **Faker-powered text generation** covering simple primitives, complex nested structures, specialized types, and realistic synthetic data. This document provides comprehensive reference for all supported types with YAML configuration examples.
 
 ---
 
@@ -1158,6 +1158,126 @@ is_fatal:
 
 ---
 
+## Event Type Column Mapping (v0.3.0)
+
+The internal `_event_type_id` discriminator drives conditional field logic but is
+hidden from output. To expose it as a visible column, use the `event_type_id` flag
+in `common_fields`:
+
+```yaml
+common_fields:
+  event_name:
+    event_type_id: true
+```
+
+**Rules:**
+- Only valid in `common_fields` (not in `event_types.fields` or `derived_fields`).
+- Mutually exclusive with `values`, `range`, `expr`, and `faker`.
+- Always produces a string column -- no `type` needed.
+- The column name is user-chosen (`event_name`, `event_type`, `type`, etc.).
+- Useful as `partition_key_field` for Kinesis/Kafka routing.
+
+---
+
+## Faker Integration (v0.3.0)
+
+### Overview
+
+Generate realistic data using [Python Faker](https://faker.readthedocs.io/) via
+dbldatagen's `fakerText()` UDF. Instead of choosing from a fixed `values` list,
+Faker produces unique names, addresses, emails, sentences, and hundreds of other
+data types on every row.
+
+**Prerequisite:** `pip install faker` (pre-installed on Databricks Runtime 13.3+,
+or `pip install dblstreamgen[faker]`).
+
+### YAML Syntax
+
+```yaml
+field_name:
+  type: string          # must be string
+  faker: "<method>"     # Python Faker method name (e.g. "name", "city", "email")
+  faker_args:           # optional: kwargs forwarded to the Faker method
+    nb_words: 8
+```
+
+`faker` is **mutually exclusive** with `values`, `range`, and `expr`.  
+It can be combined with `percent_nulls` and `outliers`.
+
+### Common Faker Methods
+
+| Method | Example Output |
+|--------|---------------|
+| `name` | "John Smith" |
+| `first_name` | "Alice" |
+| `last_name` | "Williams" |
+| `email` | "jsmith@example.com" |
+| `ascii_company_email` | "alice@acme.com" |
+| `street_address` | "123 Main St" |
+| `city` | "New York" |
+| `zipcode` | "10001" |
+| `phone_number` | "(555) 123-4567" |
+| `sentence` | "The quick brown fox..." |
+| `paragraph` | Multi-sentence text |
+| `text` | Longer block of text |
+| `user_name` | "alice_42" |
+| `url` | "https://example.com" |
+| `company` | "Acme Corp" |
+| `credit_card_number` | "4111111111111111" |
+
+Full list: https://faker.readthedocs.io/en/master/providers.html
+
+### Where Faker Works
+
+- **common_fields** -- applied to every row
+- **event-type fields** -- conditional per event type (CASE WHEN)
+- **struct sub-fields** -- inside nested structs at any depth
+- Combined with `percent_nulls` and `outliers` for data quality testing
+
+### Examples
+
+```yaml
+# Basic: realistic name on every row
+customer_name:
+  type: string
+  faker: "name"
+
+# With method arguments: 8-word sentence
+tagline:
+  type: string
+  faker: "sentence"
+  faker_args:
+    nb_words: 8
+
+# Inside a struct
+address:
+  type: struct
+  fields:
+    street:
+      type: string
+      faker: "street_address"
+    city:
+      type: string
+      faker: "city"
+
+# With null injection
+bio:
+  type: string
+  faker: "text"
+  faker_args:
+    max_nb_chars: 200
+  percent_nulls: 0.3
+```
+
+### Performance Note
+
+Faker fields use Pandas UDFs (via dbldatagen's `fakerText`), which are slower
+than pure SQL expressions. For maximum throughput at millions of rows/sec,
+prefer `values` lists for categorical data and reserve Faker for fields that
+need unique, realistic text. A mix of both works well in practice.
+
+---
+
 ## Performance Considerations
 
 ### Type Impact on Performance
@@ -1170,6 +1290,7 @@ is_fatal:
 | **Structs (2 levels)** | Fast | Medium | Fast |
 | **Structs (5+ levels)** | Medium | Large | Medium |
 | **Maps** | Fast | Medium | Medium |
+| **Faker fields** | Medium | Medium | Fast |
 
 ### Recommendations
 
@@ -1177,6 +1298,7 @@ is_fatal:
 2. **Limit array sizes**: Keep `num_features` under 20 for best performance
 3. **Limit nesting depth**: 2-3 levels is optimal for most use cases
 4. **Use structs over maps**: Structs are more type-safe and efficient
+5. **Use Faker sparingly**: Reserve for fields needing unique realistic text; use `values` for categorical data
 
 ---
 
@@ -1184,7 +1306,8 @@ is_fatal:
 
 See complete working examples:
 - [extended_types_config.yaml](../sample/configs/extended_types_config.yaml) - All simple types
-- [nested_types_config.yaml](../sample/configs/nested_types_config.yaml) - Complex nested types
+- [nested_types_config.yaml](../sample/configs/nested_types_config.yaml) - Complex nested types with Faker
+- [faker_config.yaml](../sample/configs/faker_config.yaml) - Faker integration examples
 - [simple_config.yaml](../sample/configs/simple_config.yaml) - Basic types (v0.1.0 compatible)
 
 ---
@@ -1197,4 +1320,4 @@ See complete working examples:
 
 ---
 
-**Last Updated:** February 2026 - v0.2.0
+**Last Updated:** February 2026 - v0.3.0
