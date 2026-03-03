@@ -49,8 +49,8 @@ CATALOG="your_catalog"
 SCHEMA="your_schema"
 
 # Upload wheel
-databricks fs cp dist/dblstreamgen-0.1.0-py3-none-any.whl \
-  /Volumes/$CATALOG/$SCHEMA/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+databricks fs cp dist/dblstreamgen-0.4.0-py3-none-any.whl \
+  /Volumes/$CATALOG/$SCHEMA/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Upload configs
 databricks fs cp sample/configs/config_generation.yaml \
@@ -70,14 +70,14 @@ databricks fs ls /Volumes/$CATALOG/$SCHEMA/config/
 2. Click on **Volumes** tab
 3. Click on `libraries` volume
 4. Click **Upload** button
-5. Select `dblstreamgen-0.1.0-py3-none-any.whl`
+5. Select `dblstreamgen-0.4.0-py3-none-any.whl`
 6. Repeat for `config` volume with YAML files
 
 ### Step 3: Use in Notebooks
 
 ```python
 # Install from Unity Catalog volume
-%pip install /Volumes/<catalog>/<schema>/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+%pip install /Volumes/<catalog>/<schema>/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Load config from Unity Catalog volume
 import dblstreamgen
@@ -99,7 +99,7 @@ Unity Catalog volume paths follow this pattern:
 Examples:
 ```python
 # Wheel
-/Volumes/main/dblstreamgen/libraries/dblstreamgen-0.1.0-py3-none-any.whl
+/Volumes/main/dblstreamgen/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Config
 /Volumes/main/dblstreamgen/config/config_generation.yaml
@@ -175,7 +175,7 @@ VOLUME_LIBS = "libraries"     # Volume for wheels
 VOLUME_CONFIG = "config"      # Volume for configs
 
 # Build paths
-WHEEL_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_LIBS}/dblstreamgen-0.1.0-py3-none-any.whl"
+WHEEL_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_LIBS}/dblstreamgen-0.4.0-py3-none-any.whl"
 GEN_CONFIG = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_CONFIG}/config_generation.yaml"
 SRC_CONFIG = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME_CONFIG}/config_source_kinesis.yaml"
 
@@ -202,7 +202,7 @@ publisher = dblstreamgen.KinesisPublisher(config['kinesis_config'])
 
 | Location | Unity Catalog Volume | DBFS (Legacy) | Workspace Repos |
 |----------|---------------------|---------------|-----------------|
-| Wheel | `/Volumes/main/dblstreamgen/libraries/dblstreamgen-0.1.0-py3-none-any.whl` | `/dbfs/libraries/dblstreamgen-0.1.0-py3-none-any.whl` | `/Workspace/Repos/<user>/dblstreamgen/dist/dblstreamgen-0.1.0-py3-none-any.whl` |
+| Wheel | `/Volumes/main/dblstreamgen/libraries/dblstreamgen-0.4.0-py3-none-any.whl` | `/dbfs/libraries/dblstreamgen-0.4.0-py3-none-any.whl` | `/Workspace/Repos/<user>/dblstreamgen/dist/dblstreamgen-0.4.0-py3-none-any.whl` |
 | Config | `/Volumes/main/dblstreamgen/config/config_generation.yaml` | `/dbfs/configs/dblstreamgen/config_generation.yaml` | `/Workspace/Repos/<user>/dblstreamgen/sample/configs/config_generation.yaml` |
 
 **Recommendation**: Use Unity Catalog volumes for production, Workspace Repos for development.

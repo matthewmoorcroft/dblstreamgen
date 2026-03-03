@@ -643,8 +643,10 @@ Target Metrics (Example):
 **Configuration Example**:
 ```yaml
 # dblstreamgen config for baseline test
-streaming_config:
-  total_rows_per_second: 1000  # 50% of expected 2000/sec peak
+generation_mode: "streaming"
+scenario:
+  duration_seconds: 300
+  baseline_rows_per_second: 1000  # 50% of expected 2000/sec peak
 
 event_types:
   - event_type_id: "user.page_view"
@@ -1414,5 +1416,5 @@ For questions or contributions, see the main [README](../README.md) or project r
 
 ---
 
-*Last Updated: October 2025 - v0.1.0*
+*Last Updated: March 2026 - v0.4.0*
 

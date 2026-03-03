@@ -1,90 +1,64 @@
-# dblstreamgen v0.1.0 Configuration Example
-# 
-# This configuration demonstrates generating synthetic streaming data
-# matching customer's arbitrary-event-telemetry schema structure.
+# dblstreamgen v0.4 Configuration Example
+#
+# Web analytics events: page views, clicks, purchases.
+# Demonstrates the core v0.4 format: scenario section, float weights,
+# serialization config, and native timestamp ranges.
 
-# ============================================================================
-# MAIN CONFIGURATION
-# ============================================================================
-
-# Generation mode: "streaming" or "batch"
 generation_mode: "streaming"
 
-# Streaming configuration
-streaming_config:
-  total_rows_per_second: 1000  # Total throughput across all event types
-  # Results in:
-  # - user.page_view: 600 events/sec
-  # - user.click: 300 events/sec
-  # - user.purchase: 100 events/sec
+scenario:
+  seed: 42
+  duration_seconds: 300
+  baseline_rows_per_second: 1000
 
-# Serialization format for payloads
-serialization_format: "json"  # Options: "json", "avro", "binary", "protobuf"
-
-# Sink configuration
-sink_config:
-  type: "kinesis"  # Options: "kinesis", "kafka", "eventhubs", "delta"
-  
-  # Kinesis-specific settings
-  stream_name: "web-events-stream"
-  region: "us-east-1"
-  
-  # Which field to use for Kinesis partitioning (matches customer's "event_key" pattern)
+serialization:
+  format: "json"
   partition_key_field: "event_key"
-  
-  # AUTHENTICATION (choose ONE):
-  # Option 1: Unity Catalog service credential (single-user clusters, auto-refresh)
-  service_credential: "my-kinesis-credential"
-  
-  # Option 2: Direct credentials from Databricks secrets (legacy)
-  # aws_access_key_id: "{{secrets/my-scope/aws-access-key}}"
-  # aws_secret_access_key: "{{secrets/my-scope/aws-secret-key}}"
-  
-  # Option 3: Cluster instance profile (omit credentials - automatic)
 
 # ============================================================================
-# SCHEMA CONFIGURATION
+# SCHEMA
 # ============================================================================
 
-# Common fields that appear in ALL event types
-# These match the customer's bronze ingest expectations
+# Common fields appear in ALL event types
 common_fields:
   event_name:
-    event_type_id: true  # Maps to event_type_id values from event_types
-  
-  event_key:
-    type: "string"  # Partition key for Kinesis (extracted in bronze as payload:event_key)
-    # Generate user-based keys for partitioning
-    values: ["user_1", "user_2", "user_3", "user_4", "user_5", 
-             "user_6", "user_7", "user_8", "user_9", "user_10"]
-  
-  event_timestamp:
-    type: "timestamp"  # When the event occurred (extracted in bronze as payload:event_timestamp)
-  
-  event_id:
-    type: "uuid"  # Unique event identifier
-  
-  session_id:
-    type: "uuid"  # Session tracking
+    event_type_id: true  # Populated from event_type_id values
 
-# Event type definitions with weights (must sum to 1.0)
+  event_key:
+    type: "string"
+    values: ["user_1", "user_2", "user_3", "user_4", "user_5",
+             "user_6", "user_7", "user_8", "user_9", "user_10"]
+
+  event_timestamp:
+    type: "timestamp"
+    begin: "2024-01-01 00:00:00"
+    end: "2024-12-31 23:59:59"
+    random: true
+
+  event_id:
+    type: "uuid"
+
+  session_id:
+    type: "uuid"
+
+# Event type weights must sum to 1.0
 event_types:
   # Page view events (60% of traffic)
-  - event_type_id: "user.page_view"  # Maps to event_name via event_type_id: true
+  - event_type_id: "user.page_view"
     weight: 0.60
     fields:
       page_url:
         type: "string"
         values: ["/home", "/products", "/cart", "/checkout", "/about"]
-        weights: [0.40, 0.30, 0.15, 0.10, 0.05]
+        weights: [40, 30, 15, 10, 5]
       referrer:
         type: "string"
         values: ["direct", "google", "facebook", "email", "other"]
-        weights: [0.30, 0.35, 0.15, 0.10, 0.10]
+        weights: [30, 35, 15, 10, 10]
       user_id:
         type: "int"
         range: [1, 1000000]
-  
+
   # Click events (30% of traffic)
   - event_type_id: "user.click"
     weight: 0.30
@@ -92,15 +66,15 @@ event_types:
       element_id:
         type: "string"
         values: ["btn_buy", "btn_add_cart", "link_product", "btn_search", "link_footer"]
-        weights: [0.25, 0.30, 0.25, 0.15, 0.05]
+        weights: [25, 30, 25, 15, 5]
       element_type:
         type: "string"
         values: ["button", "link", "image"]
-        weights: [0.50, 0.40, 0.10]
+        weights: [50, 40, 10]
       user_id:
         type: "int"
         range: [1, 1000000]
-  
+
   # Purchase events (10% of traffic)
   - event_type_id: "user.purchase"
     weight: 0.10
@@ -116,29 +90,3 @@ event_types:
       user_id:
         type: "int"
         range: [1, 1000000]
-
-# ============================================================================
-# NOTES
-# ============================================================================
-# - Weights MUST sum to 1.0 (validated at config load)
-# - total_rows_per_second is distributed by weights
-# - All fields in common_fields appear in every event type
-# - Event-specific fields only appear in that event type
-#
-# Customer Bronze Ingest Compatibility:
-# - event_name: Extracted as payload:event_name in bronze layer
-# - event_key: Extracted as payload:event_key, used for partitioning
-# - event_timestamp: Extracted as payload:event_timestamp, used for date partitioning
-# - All fields are at the top level of the JSON payload (flat structure)
-#
-# Example Kinesis record data field:
-# {
-#   "event_name": "user.page_view",
-#   "event_key": "user_12345",
-#   "event_timestamp": "2025-10-10T12:00:00.123Z",
-#   "event_id": "552c2a1e-5ab5-4a0f-95d6-57a7866fb624",
-#   "session_id": "e28c2df6-1b49-4bc2-be25-5515f39b721e",
-#   "page_url": "/home",
-#   "referrer": "google",
-#   "user_id": 12345
-# }

@@ -10,17 +10,14 @@
 
 generation_mode: streaming
 
-streaming_config:
-  total_rows_per_second: 100000
+scenario:
+  seed: 42
+  duration_seconds: 300
+  baseline_rows_per_second: 100000
 
-serialization_format: json
-
-sink_config:
-  type: kinesis
-  stream_name: stress-test-stream
-  region: us-east-1
+serialization:
+  format: json
   partition_key_field: event_key
-  service_credential: my-kinesis-credential
 
 # ============================================================================
 # SCHEMA CONFIGURATION

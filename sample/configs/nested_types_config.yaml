@@ -1,25 +1,20 @@
-# dblstreamgen Nested Types Configuration Example
+# dblstreamgen v0.4 - Nested Types Configuration Example
 #
-# This configuration showcases complex nested data types:
+# Showcases complex nested data types:
 # - Arrays (variable and fixed length)
 # - Structs (nested and multi-level)
 # - Maps (key-value pairs)
 #
-# Use this as a reference for building complex event schemas
-
-# ============================================================================
-# MAIN CONFIGURATION
-# ============================================================================
+# Use this as a reference for building complex event schemas.
 
 generation_mode: "streaming"
 
-streaming_config:
-  total_rows_per_second: 500
+scenario:
+  seed: 42
+  duration_seconds: 300
+  baseline_rows_per_second: 500
 
-sink_config:
-  type: "delta"
-  table_name: "catalog.schema.nested_types_demo"
-  partition_key_field: "event_name"
+# No serialization section -- wide schema output (typed columns, suitable for Delta)
 
 # ============================================================================
 # SCHEMA CONFIGURATION - Nested Types

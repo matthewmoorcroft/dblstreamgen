@@ -28,8 +28,7 @@
 **Key Features:**
 - **Config-driven** - Define schemas in YAML with no code required
 - **dbldatagen-powered** - Leverages Spark for scale
-- **Faker integration** - Realistic names, addresses, emails via Python Faker (v0.3.0)
-- **Multiple event types** - Wide schema approach for 1500+ types
+- **Faker integration** - Realistic names, addresses, emails via Python Faker - **Multiple event types** - Wide schema approach for 1500+ types
 - **Flexible sinks** - Kinesis, Kafka, Event Hubs, Delta
 - **Use-case agnostic** - Works for any domain
 - **Data quality testing** - Outlier injection and null injection for testing pipelines
@@ -65,15 +64,9 @@ hatch run lint          # Lint code
 hatch version patch     # Bump version
 hatch build             # Build wheel
 hatch publish           # Publish to PyPI
-
-# Using Makefile (convenience wrapper)
-make help               # Show all commands
-make test-cov           # Run tests with coverage
-make build              # Build wheel
-make release-patch      # Full release workflow
 ```
 
-**Output:** `dist/dblstreamgen-0.3.0-py3-none-any.whl`
+**Output:** `dist/dblstreamgen-0.4.0-py3-none-any.whl`
 
 For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD integration, see [BUILD.md](BUILD.md).
 
@@ -88,14 +81,14 @@ For detailed build instructions, tool comparisons, publishing to PyPI, and CI/CD
 CREATE VOLUME IF NOT EXISTS catalog.schema.libraries;
 
 # Upload the wheel using Databricks UI or CLI
-# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
+# File location: /Volumes/catalog/schema/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 ```
 
 #### Step 2: Install in Notebook
 
 ```python
 # Install the library
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Restart Python to load the library
 dbutils.library.restartPython()
@@ -124,44 +117,41 @@ Copy these cells into a Databricks notebook or see the complete example at `samp
 **Cell 1 - Install:**
 ```python
 # Install from Unity Catalog volume
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 dbutils.library.restartPython()
 ```
 
 **Cell 2 - Setup:**
 ```python
 from pyspark.sql import SparkSession
-import dblstreamgen
-from dblstreamgen.sinks import KinesisDataSource
+from dblstreamgen import Config, Scenario, KinesisDataSource
 
 spark = SparkSession.getActiveSession()
 spark.dataSource.register(KinesisDataSource)
 
 # Load configuration (upload simple_config.yaml to your workspace first)
-config = dblstreamgen.load_config("/Workspace/path/to/simple_config.yaml")
+config = Config.from_yaml("/Workspace/path/to/simple_config.yaml")
 
-# Create orchestrator
-orchestrator = dblstreamgen.StreamOrchestrator(spark, config)
+scenario = Scenario(spark, config)
 print("Setup complete")
 ```
 
-**Cell 3 - Generate & Write to Kinesis:**
+**Cell 3 - Run scenario (blocks for duration_seconds, then stops automatically):**
 ```python
-# Create unified stream
-unified_stream = orchestrator.create_unified_stream()
+def kinesis_sink(df, checkpoint_path):
+    return (
+        df.writeStream
+        .format("dblstreamgen_kinesis")
+        .option("stream_name", "web-events-stream")
+        .option("region", "us-east-1")
+        .option("service_credential", "my-kinesis-credential")
+        .option("checkpointLocation", checkpoint_path)
+        .trigger(processingTime="1 second")
+        .start()
+    )
 
-# Write to Kinesis
-query = unified_stream.writeStream \
-    .format("dblstreamgen_kinesis") \
-    .option("stream_name", "web-events-stream") \
-    .option("region", "us-east-1") \
-    .option("partition_key_field", "event_key") \
-    .option("service_credential", "my-kinesis-credential") \
-    .option("checkpointLocation", "/tmp/dblstreamgen/checkpoints") \
-    .trigger(processingTime='1 second') \
-    .start()
-
-print(f"Streaming to Kinesis - Query ID: {query.id}")
+result = scenario.run(kinesis_sink, "/tmp/dblstreamgen/checkpoints")
+print(result)
 ```
 
 **Cell 4 - Monitor (Optional):**
@@ -208,46 +198,38 @@ See `sample/configs/simple_config.yaml` for the complete configuration.
 ### Step 2: Generate and Stream Data
 
 ```python
+from dblstreamgen import Config, Scenario, KinesisDataSource
 from pyspark.sql import SparkSession
-import dblstreamgen
 
-# Get Spark session
 spark = SparkSession.getActiveSession()
 
 # Load configuration
-config = dblstreamgen.load_config("/Workspace/path/to/simple_config.yaml")
+config = Config.from_yaml("/Workspace/path/to/simple_config.yaml")
+scenario = Scenario(spark, config)
 
-# Create orchestrator
-orchestrator = dblstreamgen.StreamOrchestrator(spark, config)
-
-# Generate unified stream
-unified_stream = orchestrator.create_unified_stream()
-
-# Output schema:
-# root
-#  |-- partition_key: string (for Kinesis routing)
-#  |-- data: string (flat JSON with all event fields)
-
-# Display the stream schema
-unified_stream.printSchema()
+# Build returns a streaming DataFrame.
+# If the config has a `serialization:` section, output is narrow (partition_key, data).
+# Pass serialize=False for wide typed columns.
+df = scenario.build()
+df.printSchema()
 
 # Preview the data (for testing)
-display(unified_stream)
+display(df)
 ```
 
 ### Understanding Output Formats
 
-The library can generate data in **two formats** depending on your sink type:
+The library generates data in **two formats** depending on the config and sink type:
 
 #### **Format 1: Serialized (for Kinesis/Kafka)**
 
+Set `serialization:` in your YAML config (see `simple_config.yaml`):
+
 ```python
-# For message-based systems (Kinesis, Kafka)
-stream = orchestrator.create_unified_stream(serialize=True)  # Default
-stream.printSchema()
-# root
-#  |-- partition_key: string (for routing/sharding)
-#  |-- data: string (JSON with all fields)
+df = scenario.build()       # serialized: (partition_key, data)
+# schema:
+#  |-- partition_key: string
+#  |-- data: string (JSON payload)
 ```
 
 **Use for:** Kinesis, Kafka (message-based systems that need key/value pairs)
@@ -257,7 +239,7 @@ stream.printSchema()
 {
   "event_name": "user.page_view",
   "event_key": "user_1",
-  "event_timestamp": "2025-10-10T12:00:00.123Z",
+  "event_timestamp": "2024-06-15T12:00:00.123Z",
   "event_id": "552c2a1e-5ab5-4a0f-95d6-57a7866fb624",
   "page_url": "/home",
   "user_id": 12345
@@ -267,14 +249,12 @@ stream.printSchema()
 #### **Format 2: Wide Schema (for Delta/Parquet/JSON/CSV)**
 
 ```python
-# For file/table-based systems (Delta, Parquet, JSON, CSV)
-stream = orchestrator.create_unified_stream(serialize=False)
-stream.printSchema()
-# root
+df = scenario.build(serialize=False)   # wide typed columns
+# schema:
 #  |-- event_name: string
 #  |-- event_id: string
 #  |-- event_timestamp: timestamp
-#  |-- user_id: string
+#  |-- user_id: int
 #  |-- page_url: string
 #  |-- amount: double
 #  |-- ... (all fields as typed columns)
@@ -362,8 +342,8 @@ While Kinesis requires a custom DataSource, other sinks use **native Spark conne
 ### Kafka (Native Spark)
 
 ```python
-# Generate serialized format for Kafka
-stream = orchestrator.create_unified_stream(serialize=True)
+# Build serialized format for Kafka (config must have serialization: section)
+stream = scenario.build()
 
 # Kafka expects 'key' and 'value' columns (rename from partition_key and data)
 kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
@@ -390,8 +370,8 @@ query = kafka_stream.writeStream \
 ### Delta Lake (Native Spark)
 
 ```python
-# Generate wide schema for Delta (NOT serialized)
-stream = orchestrator.create_unified_stream(serialize=False)
+# Build wide schema for Delta
+stream = scenario.build(serialize=False)
 
 # Write using native Delta format
 query = stream.writeStream \
@@ -418,8 +398,8 @@ query = stream.writeStream \
 ### Parquet Files (Native Spark)
 
 ```python
-# Generate wide schema for Parquet (NOT serialized)
-stream = orchestrator.create_unified_stream(serialize=False)
+# Build wide schema for Parquet
+stream = scenario.build(serialize=False)
 
 # Write using native Parquet format
 query = stream.writeStream \
@@ -442,8 +422,8 @@ query = stream.writeStream \
 ### JSON Files (Native Spark)
 
 ```python
-# Generate wide schema for JSON (NOT serialized)
-stream = orchestrator.create_unified_stream(serialize=False)
+# Build wide schema for JSON
+stream = scenario.build(serialize=False)
 
 # Write using native JSON format
 query = stream.writeStream \
@@ -469,7 +449,7 @@ query = stream.writeStream \
 
 ```python
 # DON'T DO THIS
-stream = orchestrator.create_unified_stream(serialize=True)  # Wrong!
+stream = scenario.build()  # Wrong if config has serialization: section!
 stream.writeStream.format("delta").table("events")
 
 # Result: Delta table only has 2 columns (partition_key, data)
@@ -478,11 +458,10 @@ stream.writeStream.format("delta").table("events")
 
 **✅ Correct:**
 ```python
-stream = orchestrator.create_unified_stream(serialize=False)  # Right!
+stream = scenario.build(serialize=False)  # Right!
 stream.writeStream.format("delta").table("events")
 
 # Result: Delta table has all columns with proper types
-# Efficient storage, fast queries, schema evolution support
 ```
 
 ---
@@ -491,7 +470,7 @@ stream.writeStream.format("delta").table("events")
 
 ```python
 # DON'T DO THIS
-stream = orchestrator.create_unified_stream(serialize=False)  # Wrong!
+stream = scenario.build(serialize=False)  # Wrong!
 stream.writeStream.format("kafka").option("topic", "events").start()
 
 # Result: Error! Kafka expects 'key' and 'value' columns
@@ -499,11 +478,9 @@ stream.writeStream.format("kafka").option("topic", "events").start()
 
 **✅ Correct:**
 ```python
-stream = orchestrator.create_unified_stream(serialize=True)  # Right!
+stream = scenario.build()  # Right (config must have serialization: section)
 kafka_stream = stream.selectExpr("partition_key AS key", "data AS value")
 kafka_stream.writeStream.format("kafka").option("topic", "events").start()
-
-# Result: Works! Kafka gets proper key/value pairs
 ```
 
 ---
@@ -532,7 +509,7 @@ dblstreamgen supports **13 data types** plus **Faker-powered text generation**, 
 |------|--------------|---------|----------|
 | `uuid` | None | `event_id: {type: "uuid"}` | Unique identifiers |
 | `string` | `values: [...]`, `weights: [...]` | `device: {type: "string", values: ["iOS", "Android"]}` | Categories, enums |
-| `string` + faker | `faker: "<method>"`, `faker_args: {...}` | `name: {type: "string", faker: "name"}` | Realistic text (v0.3.0) |
+| `string` + faker | `faker: "<method>"`, `faker_args: {...}` | `name: {type: "string", faker: "name"}` | Realistic text |
 | `int` | `range: [min, max]` | `quantity: {type: "int", range: [1, 100]}` | Counts, small IDs |
 | `long` | `range: [min, max]` | `transaction_id: {type: "long", range: [1000000000, 9999999999]}` | Large IDs |
 | `short` | `range: [min, max]` | `port: {type: "short", range: [1024, 65535]}` | Small integers |
@@ -587,8 +564,7 @@ tags:
   values: ["urgent", "normal", "low"]
   num_features: [1, 4]  # 1-4 tags
 
-# Faker-generated realistic name (v0.3.0)
-customer_name:
+# Faker-generated realistic name customer_name:
   type: string
   faker: "name"
 
@@ -681,7 +657,7 @@ For scale testing with 1500+ event types, see `sample/configs/1500_events_config
 
 ```python
 # Make sure the wheel is installed
-%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.3.0-py3-none-any.whl
+%pip install /Volumes/catalog/schema/libraries/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Restart Python
 dbutils.library.restartPython()
@@ -719,14 +695,6 @@ aws kinesis create-stream \
   --shard-count 2
 ```
 
-Or let the library calculate shard count:
-
-```yaml
-sink_config:
-  auto_shard_calculation: true
-  # Library will calculate based on throughput
-```
-
 ### Kinesis Authentication Fails
 
 **For service_credential:**
@@ -758,15 +726,16 @@ Generate a fixed number of events:
 ```yaml
 generation_mode: "batch"
 
-batch_config:
+scenario:
   total_rows: 1000000
   partitions: 16
 ```
 
 ```python
-# Build batch DataFrame
-spec = builder.build_spec_for_event_type(event_type_config)
-df = spec.build()
+from dblstreamgen import Config, Scenario
+
+config = Config.from_yaml("/path/to/batch_config.yaml")
+df = Scenario(spark, config).build()
 
 # Write to Delta
 df.write.format("delta").mode("append").save("/path/to/table")
@@ -792,7 +761,8 @@ See `sample/configs/1500_events_config.yaml` for a complete example.
 ### Custom Partition Keys
 
 ```yaml
-sink_config:
+serialization:
+  format: "json"
   partition_key_field: "custom_field"  # Use any field from your config
 ```
 
@@ -804,8 +774,7 @@ sink_config:
 - **Basic Example**: `sample/configs/simple_config.yaml` - Simple types, web analytics pattern
 - **Extended Types**: `sample/configs/extended_types_config.yaml` - All simple types (boolean, long, double, date, etc.)
 - **Nested Types**: `sample/configs/nested_types_config.yaml` - Complex types (array, struct, map) with Faker
-- **Faker Integration**: `sample/configs/faker_config.yaml` - Realistic data via Python Faker (v0.3.0)
-- **Stress Test**: `sample/configs/1500_events_config.yaml` - 1500+ event types at scale
+- **Faker Integration**: `sample/configs/faker_config.yaml` - Realistic data via Python Faker - **Stress Test**: `sample/configs/1500_events_config.yaml` - 1500+ event types at scale
 
 ### Notebooks
 - **Quick Start**: `sample/notebooks/01_simple_example.py` - End-to-end Kinesis + Delta examples
@@ -814,15 +783,16 @@ sink_config:
 - **YAML Config Reference**: `docs/YAML_CONFIG_REFERENCE.md` - Complete schema spec for building configs (LLM-friendly)
 - **Type System Reference**: `docs/TYPE_SYSTEM.md` - All 13 supported types plus Faker with examples
 
-### v0.2.0 Features
-- **Outlier Injection**: Configure bad data percentages per field for data quality testing
-- **Raw `expr` Passthrough**: Use arbitrary SQL expressions for field generation
-- **Derived Fields**: Computed columns referencing other generated columns
-- **Weighted Distribution Fix**: Correct probability sampling for multi-value fields
-- **Integer Weights**: Event type weights accept integers (e.g., `[6, 3, 1]`), auto-normalized
+### v0.4 Features
+- **Scenario API**: `Scenario(spark, config).build()` / `.run(sink_factory, checkpoint_base)`
+- **Native dbldatagen generation**: Timestamps, numerics, and booleans use dbldatagen's native `begin`/`end`/`minValue`/`maxValue`/`random=True` parameters
+- **Independent rate control**: Spike/ramp scenarios use separate `DataGenerator` instances; the baseline is never disrupted
+- **Spec deduplication**: Event types with identical field specs share hidden columns, reducing the CASE WHEN fanout
+- **Derived fields**: `common_fields` entries with `base_columns` are computed last, topologically sorted
+- **Outlier injection**: Configure bad data percentages per field for data quality testing
+- **Faker integration**: Realistic names, addresses, emails via Python Faker
 
-See `docs/TYPE_SYSTEM.md` for complete v0.2.0 documentation.
-
+See `CHANGELOG.md` for full history.
 
 ---
 
@@ -846,4 +816,4 @@ This library is licensed under the Databricks License and is intended for use in
 
 ---
 
-*dblstreamgen v0.2.0 - Synthetic streaming & batch data generation for Databricks*
+*dblstreamgen v0.4 - Synthetic streaming & batch data generation for Databricks*

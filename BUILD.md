@@ -71,7 +71,7 @@ hatch build --target wheel
 hatch clean && hatch build
 ```
 
-**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
+**Output:** `dist/dblstreamgen-0.4.0-py3-none-any.whl`
 
 ### Using python -m build (Traditional)
 
@@ -89,8 +89,8 @@ python -m build --wheel
 ```
 
 This creates:
-- `dblstreamgen-0.1.0-py3-none-any.whl` (wheel)
-- `dblstreamgen-0.1.0.tar.gz` (source distribution)
+- `dblstreamgen-0.4.0-py3-none-any.whl` (wheel)
+- `dblstreamgen-0.4.0.tar.gz` (source distribution)
 
 ## What's Included in the Wheel
 
@@ -162,7 +162,7 @@ This keeps the wheel small and focused on the library code.
 After building:
 
 ```bash
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl
 ```
 
 ### Editable Installation (Development)
@@ -179,16 +179,16 @@ This allows you to make code changes without reinstalling.
 
 ```bash
 # Install with Kinesis support
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[kinesis]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[kinesis]
 
 # Install with Kafka support
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[kafka]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[kafka]
 
 # Install with all optional dependencies
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[all]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[all]
 
 # Install with dev dependencies (testing, linting)
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[dev]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[dev]
 ```
 
 ## Verifying the Build
@@ -197,11 +197,11 @@ pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[dev]
 
 ```bash
 # List files in the wheel
-unzip -l dist/dblstreamgen-0.1.0-py3-none-any.whl
+unzip -l dist/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Or use wheel
 pip install wheel
-wheel unpack dist/dblstreamgen-0.1.0-py3-none-any.whl
+wheel unpack dist/dblstreamgen-0.4.0-py3-none-any.whl
 ```
 
 ### Test Installation
@@ -210,10 +210,10 @@ wheel unpack dist/dblstreamgen-0.1.0-py3-none-any.whl
 # Create a test environment
 python -m venv test_env
 source test_env/bin/activate
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl
 
 # Test import
-python -c "from dblstreamgen import load_config, StreamOrchestrator; print('Success!')"
+python -c "from dblstreamgen import Config, Scenario; print('Success!')"
 
 # Deactivate when done
 deactivate
@@ -537,10 +537,11 @@ python -m build
 Check that `src/dblstreamgen/__init__.py` exports the main classes:
 
 ```python
-from dblstreamgen.config import load_config, StreamConfig
-from dblstreamgen.orchestrator.stream_orchestrator import StreamOrchestrator
+from dblstreamgen.config import Config
+from dblstreamgen.scenario.scenario import Scenario
+from dblstreamgen.sinks.kinesis_writer import KinesisDataSource
 
-__all__ = ["load_config", "StreamConfig", "StreamOrchestrator"]
+__all__ = ["Config", "Scenario", "KinesisDataSource"]
 ```
 
 ### Missing Dependencies
@@ -550,7 +551,7 @@ Ensure all dependencies are listed in `pyproject.toml` under `dependencies` or `
 ## Current Wheel Info
 
 **Package**: `dblstreamgen`  
-**Version**: `0.1.0`  
+**Version**: `0.4.0`
 **Size**: ~50-100 KB (code only)  
 **Python**: >=3.9  
 **Platform**: Any (pure Python)  
@@ -673,31 +674,3 @@ pdm publish --repository testpypi
 pdm publish
 ```
 
-### Makefile Shortcuts (Included)
-
-A `Makefile` is included for convenience:
-
-```bash
-make help           # Show all available commands
-make install        # Install hatch
-make test           # Run tests
-make test-cov       # Run tests with coverage
-make lint           # Run linter
-make format         # Format code
-make clean          # Clean build artifacts
-make build          # Build wheel
-make version-patch  # Bump patch version
-make publish-test   # Publish to Test PyPI
-make publish        # Publish to PyPI
-make release-patch  # Full release workflow (test, bump, build, publish)
-```
-
-**Example full release:**
-
-```bash
-# Run all checks, bump version, build, and publish to Test PyPI
-make release-patch
-
-# After testing, publish to production
-make publish
-```

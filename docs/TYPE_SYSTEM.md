@@ -1,7 +1,7 @@
 # dblstreamgen Type System Reference
 
-**Version:** 0.3.0  
-**Last Updated:** February 2026
+**Version:** 0.4.0
+**Last Updated:** March 2026
 
 ---
 
@@ -1158,7 +1158,7 @@ is_fatal:
 
 ---
 
-## Event Type Column Mapping (v0.3.0)
+## Event Type Column Mapping
 
 The internal `_event_type_id` discriminator drives conditional field logic but is
 hidden from output. To expose it as a visible column, use the `event_type_id` flag
@@ -1179,7 +1179,7 @@ common_fields:
 
 ---
 
-## Faker Integration (v0.3.0)
+## Faker Integration
 
 ### Overview
 
@@ -1308,7 +1308,7 @@ See complete working examples:
 - [extended_types_config.yaml](../sample/configs/extended_types_config.yaml) - All simple types
 - [nested_types_config.yaml](../sample/configs/nested_types_config.yaml) - Complex nested types with Faker
 - [faker_config.yaml](../sample/configs/faker_config.yaml) - Faker integration examples
-- [simple_config.yaml](../sample/configs/simple_config.yaml) - Basic types (v0.1.0 compatible)
+- [simple_config.yaml](../sample/configs/simple_config.yaml) - Basic web analytics types (v0.4 format)
 
 ---
 
@@ -1320,4 +1320,4 @@ See complete working examples:
 
 ---
 
-**Last Updated:** February 2026 - v0.3.0
+**Last Updated:** March 2026 - v0.4.0

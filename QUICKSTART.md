@@ -30,11 +30,9 @@ pip install -e .
 # Using Hatch (no environment needed!)
 hatch run test
 
-# Using Makefile
-make test
-
-# Using pytest directly (if installed)
-pytest
+# Using pytest directly
+pytest tests/unit/          # no Spark required
+pytest tests/integration/   # requires local Spark
 ```
 
 ## 🔨 Build Wheel
@@ -43,14 +41,11 @@ pytest
 # Using Hatch
 hatch build
 
-# Using Makefile
-make build
-
 # Using build module
 python -m build
 ```
 
-**Output:** `dist/dblstreamgen-0.1.0-py3-none-any.whl`
+**Output:** `dist/dblstreamgen-0.4.0-py3-none-any.whl`
 
 ## 📝 Development Workflow
 
@@ -63,27 +58,12 @@ python -m build
 hatch run all           # Runs: format, lint, type-check, test-cov
 
 # 3. Bump version
-hatch version patch     # 0.1.0 -> 0.1.1
+hatch version patch     # 0.4.0 -> 0.4.1
 
 # 4. Build and publish
 hatch build
 hatch publish -r test   # Test PyPI first
 hatch publish           # Production PyPI
-```
-
-### Using Makefile (Even Easier!)
-
-```bash
-# 1. Make your changes
-
-# 2. Run all checks
-make all
-
-# 3. Full release workflow
-make release-patch      # Tests, bumps, builds, publishes to Test PyPI
-
-# 4. After testing, publish to production
-make publish
 ```
 
 ## 🎯 Common Commands
@@ -92,16 +72,16 @@ make publish
 
 ```bash
 # Format code
-hatch run format        # or: make format
+hatch run format
 
 # Lint code
-hatch run lint          # or: make lint
+hatch run lint
 
 # Type check
-hatch run type-check    # or: make type-check
+hatch run type-check
 
 # Run tests with coverage
-hatch run test-cov      # or: make test-cov
+hatch run test-cov
 ```
 
 ### Versioning
@@ -111,24 +91,19 @@ hatch run test-cov      # or: make test-cov
 hatch version
 
 # Bump versions
-hatch version patch     # 0.1.0 -> 0.1.1
-hatch version minor     # 0.1.0 -> 0.2.0
-hatch version major     # 0.1.0 -> 1.0.0
-
-# Or use Makefile
-make version-patch
-make version-minor
-make version-major
+hatch version patch     # 0.4.0 -> 0.4.1
+hatch version minor     # 0.4.0 -> 0.5.0
+hatch version major     # 0.4.0 -> 1.0.0
 ```
 
 ### Building
 
 ```bash
 # Clean old builds
-hatch clean             # or: make clean
+hatch clean
 
 # Build wheel
-hatch build             # or: make build
+hatch build
 
 # Build specific target
 hatch build --target wheel
@@ -138,10 +113,10 @@ hatch build --target wheel
 
 ```bash
 # Publish to Test PyPI
-hatch publish -r test   # or: make publish-test
+hatch publish -r test
 
 # Publish to PyPI
-hatch publish           # or: make publish
+hatch publish
 ```
 
 ## 📦 Installing Your Built Wheel
@@ -149,23 +124,23 @@ hatch publish           # or: make publish
 ### Locally
 
 ```bash
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl
 ```
 
 ### With Optional Dependencies
 
 ```bash
 # Kinesis support
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[kinesis]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[kinesis]
 
 # Kafka support
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[kafka]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[kafka]
 
 # All optional dependencies
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[all]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[all]
 
 # Development dependencies
-pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[dev]
+pip install dist/dblstreamgen-0.4.0-py3-none-any.whl[dev]
 ```
 
 ## 🧩 Example Usage
@@ -173,36 +148,48 @@ pip install dist/dblstreamgen-0.1.0-py3-none-any.whl[dev]
 After installing the wheel:
 
 ```python
-from dblstreamgen import load_config, StreamOrchestrator
+from dblstreamgen import Config, Scenario, KinesisDataSource
 from pyspark.sql import SparkSession
 
-# Initialize Spark
 spark = SparkSession.builder.appName("test").getOrCreate()
 
-# Load config
-config = load_config('sample/configs/extended_types_config.yaml')
+# Load and validate config
+config = Config.from_yaml("sample/configs/simple_config.yaml")
 
-# Create orchestrator
-orchestrator = StreamOrchestrator(spark, config)
+# Create scenario
+scenario = Scenario(spark, config)
 
-# Generate data (wide schema for file/table sinks)
-df = orchestrator.create_unified_stream(serialize=False)
+# Build a DataFrame (wide schema -- serialize=False skips JSON serialization)
+df = scenario.build(serialize=False)
 
-# Or serialize for Kinesis/Kafka
-df_serialized = orchestrator.create_unified_stream(serialize=True)
-
-# Write to sink (using Spark's native writers)
+# Write to Delta
 df.writeStream \
-    .format("parquet") \
-    .option("path", "/path/to/output") \
-    .option("checkpointLocation", "/path/to/checkpoint") \
-    .start()
+    .format("delta") \
+    .option("checkpointLocation", "/tmp/checkpoints/example") \
+    .table("my_catalog.my_schema.events")
+
+# --- Or run the full scenario (blocks for duration_seconds) ---
+spark.dataSource.register(KinesisDataSource)
+
+def kinesis_sink(df, checkpoint_path):
+    return (
+        df.writeStream
+        .format("dblstreamgen_kinesis")
+        .option("stream_name", "my-stream")
+        .option("region", "us-east-1")
+        .option("service_credential", "my-credential")
+        .option("checkpointLocation", checkpoint_path)
+        .trigger(processingTime="1 second")
+        .start()
+    )
+
+result = scenario.run(kinesis_sink, "/tmp/checkpoints/scenario")
+print(result)
 ```
 
 ## 📚 More Information
 
 - **Full Build Documentation**: [BUILD.md](BUILD.md)
-- **Type System**: [docs/TYPE_SYSTEM.md](docs/TYPE_SYSTEM.md)
 - **Example Configs**: [sample/configs/](sample/configs/)
 - **README**: [README.md](README.md)
 
@@ -262,11 +249,10 @@ Hatch documentation: https://hatch.pypa.io/
 
 ## ⚡ Pro Tips
 
-1. **Use `make help`** to see all available commands
-2. **Use `hatch shell`** to enter a development environment
-3. **Use `hatch run all`** before committing to run all checks
-4. **Use Test PyPI** first before publishing to production
-5. **Use `hatch env show`** to see all available environments
-6. **Tag releases in git** to match wheel versions
+1. **Use `hatch shell`** to enter a development environment
+2. **Use `hatch run all`** before committing to run all checks
+3. **Use Test PyPI** first before publishing to production
+4. **Use `hatch env show`** to see all available environments
+5. **Tag releases in git** to match wheel versions
 
 Happy building! 🎉

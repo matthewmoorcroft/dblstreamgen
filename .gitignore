@@ -67,8 +67,9 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
-# Agent context documentation (not for version control)
+# Agent context and design/planning docs (not for version control)
 docs/agent_context/
+docs/design/
 
 # Local development
 .envrc

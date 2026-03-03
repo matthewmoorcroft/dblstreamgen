@@ -1,4 +1,4 @@
-# dblstreamgen v0.3.0 - Faker Integration Example
+# dblstreamgen v0.4 - Faker Integration Example
 #
 # Demonstrates using Python Faker (via dbldatagen's fakerText) to generate
 # realistic data: names, addresses, emails, sentences, and more.
@@ -10,23 +10,15 @@
 #   faker_args:                     -- optional kwargs passed to the method
 #     nb_words: 8
 
-# ============================================================================
-# MAIN CONFIGURATION
-# ============================================================================
-
 generation_mode: "batch"
 
-batch_config:
+scenario:
   total_rows: 10000
-  partitions: 8
 
-sink_config:
-  type: "delta"
-  table_name: "catalog.schema.faker_demo"
-  partition_key_field: "event_name"
+# No serialization section -- batch writes the wide typed schema directly.
 
 # ============================================================================
-# SCHEMA CONFIGURATION - Faker Examples
+# SCHEMA - Faker Examples
 # ============================================================================
 
 common_fields:
@@ -38,6 +30,9 @@ common_fields:
 
   event_timestamp:
     type: "timestamp"
+    begin: "2024-01-01 00:00:00"
+    end: "2024-12-31 23:59:59"
+    random: true
 
   # Faker-generated full name
   customer_name:
@@ -63,7 +58,7 @@ common_fields:
 event_types:
   # Customer signup event with faker-generated address struct
   - event_type_id: "customer.signup"
-    weight: 4
+    weight: 0.40
     fields:
       address:
         type: "struct"
@@ -84,7 +79,7 @@ event_types:
 
   # Customer support event with faker-generated text body
   - event_type_id: "support.ticket"
-    weight: 3
+    weight: 0.30
     fields:
       subject:
         type: "string"
@@ -103,7 +98,7 @@ event_types:
 
   # Profile update event mixing faker and static values
   - event_type_id: "user.profile_update"
-    weight: 3
+    weight: 0.30
     fields:
       display_name:
         type: "string"

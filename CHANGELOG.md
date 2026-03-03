@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.4.0
+
+### Breaking Changes
+- **Config schema v0.4**: `scenario` section replaces `streaming_config`/`batch_config`.
+  Event type weights are now **floats summing to 1.0** (not positive integers).
+  `sink_config` removed -- users manage sinks via `sink_factory`.
+  `derived_fields` merged into `common_fields` (use `base_columns` key).
+- **New public API**: `Scenario(spark, Config.from_yaml(...)).build()` replaces
+  `StreamOrchestrator(spark, config).create_unified_stream()`.
+- `pyspark` and `dbldatagen` moved to optional dependencies (`pip install dblstreamgen[spark]`).
+
+### Added
+- **Hybrid native generation**: Field values generated via dbldatagen's native parameters
+  (`minValue`/`maxValue`, `begin`/`end`, `values`/`weights`, `percentNulls`) instead of
+  hand-rolled SQL. CASE WHEN expressions do routing only.
+- **Spec deduplication**: Conditional fields with identical specs across event types share
+  a single hidden column, reducing compile time at scale.
+- **Scenario runner**: `scenario.run(sink_factory, checkpoint_base)` manages baseline and
+  spike streaming queries with `try/finally` cleanup.
+- **Spike scenarios**: Burst additional load at a specific time offset with optional
+  targeted event types and independent weights.
+- **Serialization module**: `serialize_to_json` and `serialize_to_avro` with config-driven
+  dispatch and `ignoreNullFields`.
+- **Scenario facade**: `Scenario.build()`, `.dry_run()`, `.explain()`, `.plan()`, `.run()`.
+- **Timestamp modes**: Historical random, historical linear, and current-time with jitter.
+- **Derived field topological sort**: Multi-level derivation with cycle detection.
+- **Zero-weight type exclusion**: Types with `weight: 0.0` excluded from baseline, available
+  for spike activation.
+- **GitHub Actions CI**: Lint, type-check, unit tests (Python 3.9-3.12), integration tests,
+  coverage.
+
+### Deprecated
+- `StreamOrchestrator` -- use `Scenario` instead. Will be removed in v0.5.
+- `load_config()` / `load_config_from_dict()` -- use `Config.from_yaml()` / `Config.from_dict()`.
+  Legacy wrappers still work.
+
+### Migration
+```python
+# Before (v0.3)
+from dblstreamgen import StreamOrchestrator, load_config
+config = load_config("config.yaml")
+df = StreamOrchestrator(spark, config).create_unified_stream()
+
+# After (v0.4)
+from dblstreamgen import Config, Scenario
+df = Scenario(spark, Config.from_yaml("config.yaml")).build()
+```
+
 ## v0.3.0
 
 ### Added

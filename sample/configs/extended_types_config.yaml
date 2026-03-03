@@ -1,24 +1,19 @@
-# dblstreamgen Extended Types Configuration Example
+# dblstreamgen v0.4 - Extended Types Configuration Example
 #
-# This configuration showcases all simple data types including:
+# Showcases all simple data types:
 # - boolean, long, double, date, decimal, byte, short, binary
-# - Enhanced timestamp with date ranges
+# - Timestamp with date ranges
 #
-# Use this as a reference for the extended type system
-
-# ============================================================================
-# MAIN CONFIGURATION
-# ============================================================================
+# Use this as a reference for the full type system.
 
 generation_mode: "streaming"
 
-streaming_config:
-  total_rows_per_second: 500
+scenario:
+  seed: 42
+  duration_seconds: 300
+  baseline_rows_per_second: 500
 
-sink_config:
-  type: "delta"
-  table_name: "catalog.schema.extended_types_demo"
-  partition_key_field: "event_name"
+# No serialization section -- wide schema output (typed columns, suitable for Delta)
 
 # ============================================================================
 # SCHEMA CONFIGURATION - Extended Types
@@ -83,10 +78,11 @@ event_types:
         scale: 2
         range: [0.00, 99.99]
       
-      # Double type - exchange rate
+      # Double type - exchange rate (step: 0.01 for continuous precision)
       exchange_rate:
         type: "double"
         range: [0.5, 2.0]
+        step: 0.01
       
       # Short type - small integers
       item_count:
@@ -112,10 +108,11 @@ event_types:
         type: "double"
         range: [0.0, 100.0]
       
-      # Float - lower precision measurement
+      # Float - lower precision measurement (step: 0.01 for continuous precision)
       battery_voltage:
         type: "float"
         range: [3.0, 4.2]
+        step: 0.01
       
       # Byte - status code
       status_code:
