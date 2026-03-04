@@ -32,16 +32,16 @@ class StreamOrchestrator:
         Weights are positive integers (e.g., [6, 3, 1]) that are normalized
         to proportions before multiplying by total_rows_per_second.
         """
-        if self.config.data['generation_mode'] != 'streaming':
+        if self.config.data["generation_mode"] != "streaming":
             return {}
 
-        total_rate = self.config.data['streaming_config']['total_rows_per_second']
-        total_weight = sum(et['weight'] for et in self.config.data['event_types'])
+        total_rate = self.config.data["streaming_config"]["total_rows_per_second"]
+        total_weight = sum(et["weight"] for et in self.config.data["event_types"])
 
         rates = {}
-        for event_type in self.config.data['event_types']:
-            event_id = event_type['event_type_id']
-            weight = event_type['weight']
+        for event_type in self.config.data["event_types"]:
+            event_id = event_type["event_type_id"]
+            weight = event_type["weight"]
             rates[event_id] = total_rate * (weight / total_weight)
 
         return rates
@@ -94,11 +94,15 @@ class StreamOrchestrator:
 
         if rates:
             total_rate = sum(rates.values())
-            logger.info(f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
-                       f"{len(field_registry)} unique fields, target {total_rate:,.0f} rows/sec")
+            logger.info(
+                f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
+                f"{len(field_registry)} unique fields, target {total_rate:,.0f} rows/sec"
+            )
         else:
-            logger.info(f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
-                       f"{len(field_registry)} unique fields")
+            logger.info(
+                f"Stream created ({format_desc}): {len(self.config.data['event_types'])} event types, "
+                f"{len(field_registry)} unique fields"
+            )
 
         return df
 
@@ -112,7 +116,7 @@ class StreamOrchestrator:
         Returns:
             '__dsg_event_type_id' - internal discriminator column
         """
-        return '__dsg_event_type_id'
+        return "__dsg_event_type_id"
 
     def _build_complete_spec(self) -> dg.DataGenerator:
         """Build complete dbldatagen spec with all fields."""
@@ -126,31 +130,38 @@ class StreamOrchestrator:
 
     def _create_base_spec(self) -> dg.DataGenerator:
         """Initialize dbldatagen spec with internal _id column for uniqueness."""
-        if self.config.data['generation_mode'] == 'streaming':
-            total_rate = self.config.data['streaming_config']['total_rows_per_second']
+        if self.config.data["generation_mode"] == "streaming":
+            total_rate = self.config.data["streaming_config"]["total_rows_per_second"]
             spec = dg.DataGenerator(sparkSession=self.spark, name="base_stream", rows=total_rate)
         else:
-            total_rows = self.config.data['batch_config']['total_rows']
-            partitions = self.config.data['batch_config'].get('partitions', 8)
-            spec = dg.DataGenerator(sparkSession=self.spark, name="base_batch",
-                                   rows=total_rows, partitions=partitions)
+            total_rows = self.config.data["batch_config"]["total_rows"]
+            partitions = self.config.data["batch_config"].get("partitions", 8)
+            spec = dg.DataGenerator(
+                sparkSession=self.spark, name="base_batch", rows=total_rows, partitions=partitions
+            )
 
-        return spec.withColumn("__dsg_id", "long", minValue=0, maxValue=1000000000, random=True, omit=True)
+        return spec.withColumn(
+            "__dsg_id", "long", minValue=0, maxValue=1000000000, random=True, omit=True
+        )
 
     def _add_event_type_id_to_spec(self, spec) -> dg.DataGenerator:
         """Add event type column with weighted distribution using dbldatagen."""
-        event_ids = [et['event_type_id'] for et in self.config.data['event_types']]
-        weights = [et['weight'] for et in self.config.data['event_types']]
+        event_ids = [et["event_type_id"] for et in self.config.data["event_types"]]
+        weights = [et["weight"] for et in self.config.data["event_types"]]
         event_type_field = self._get_event_type_field_name()
 
-        return spec.withColumn(event_type_field, "string", values=event_ids, weights=weights, random=True, omit=True)
+        return spec.withColumn(
+            event_type_field, "string", values=event_ids, weights=weights, random=True, omit=True
+        )
 
     def _build_dataframe_from_spec(self, spec) -> DataFrame:
         """Build DataFrame from complete spec."""
-        if self.config.data['generation_mode'] == 'streaming':
-            total_rate = self.config.data['streaming_config']['total_rows_per_second']
-            return spec.build(withStreaming=True,
-                            options={'rowsPerSecond': int(total_rate), 'rampUpTimeSeconds': 0})
+        if self.config.data["generation_mode"] == "streaming":
+            total_rate = self.config.data["streaming_config"]["total_rows_per_second"]
+            return spec.build(
+                withStreaming=True,
+                options={"rowsPerSecond": int(total_rate), "rampUpTimeSeconds": 0},
+            )
         else:
             return spec.build()
 
@@ -161,7 +172,7 @@ class StreamOrchestrator:
         uses dbldatagen's native values/weights/random=True for correct
         weighted distribution. All other fields use SQL expr approach.
         """
-        common_fields = self.config.data.get('common_fields', {})
+        common_fields = self.config.data.get("common_fields", {})
         event_type_field = self._get_event_type_field_name()
 
         for field_name, field_spec in common_fields.items():
@@ -169,39 +180,42 @@ class StreamOrchestrator:
             if field_name == event_type_field:
                 continue
 
-            field_type_name = field_spec.get('type')
+            field_type_name = field_spec.get("type")
 
             # Map to internal _event_type_id via baseColumn
-            if field_spec.get('event_type_id'):
+            if field_spec.get("event_type_id"):
                 spec = spec.withColumn(
-                    field_name, "string",
-                    expr=event_type_field, baseColumn=event_type_field
+                    field_name, "string", expr=event_type_field, baseColumn=event_type_field
                 )
                 continue
 
             # Handle nested types in common fields
-            if field_type_name == 'array':
+            if field_type_name == "array":
                 spec, array_expr, generated_cols = self._process_array_field(
                     spec, field_name, field_spec, event_type_field, []
                 )
                 field_type = self._get_spark_type(field_spec)
-                spec = spec.withColumn(field_name, field_type, expr=array_expr, baseColumn=generated_cols)
+                spec = spec.withColumn(
+                    field_name, field_type, expr=array_expr, baseColumn=generated_cols
+                )
 
-            elif field_type_name == 'struct':
+            elif field_type_name == "struct":
                 spec, struct_expr, generated_cols = self._process_struct_field(
                     spec, field_name, field_spec, event_type_field, []
                 )
                 field_type = self._get_spark_type(field_spec)
-                spec = spec.withColumn(field_name, field_type, expr=struct_expr, baseColumn=generated_cols)
+                spec = spec.withColumn(
+                    field_name, field_type, expr=struct_expr, baseColumn=generated_cols
+                )
 
-            elif field_type_name == 'map':
+            elif field_type_name == "map":
                 spec, map_expr, generated_cols = self._process_map_field(
                     spec, field_name, field_spec, event_type_field, []
                 )
                 field_type = self._get_spark_type(field_spec)
                 spec = spec.withColumn(field_name, field_type, expr=map_expr)
 
-            elif 'faker' in field_spec:
+            elif "faker" in field_spec:
                 spec, hidden_col = self._add_faker_hidden_column(spec, field_name, field_spec)
                 sql_expr = self._generate_sql_expression(field_spec, faker_col=hidden_col)
                 field_type = self._get_spark_type(field_spec)
@@ -231,27 +245,29 @@ class StreamOrchestrator:
         dbldatagen's values parameter accepts strings, numbers, booleans, and
         constants conforming to the column type.
         """
-        if 'expr' in field_spec:
+        if "expr" in field_spec:
             return False
-        if field_spec.get('outliers'):
+        if field_spec.get("outliers"):
             return False
-        if 'faker' in field_spec:
+        if "faker" in field_spec:
             return False
-        values = field_spec.get('values', [])
+        values = field_spec.get("values", [])
         return len(values) > 1
 
-    def _add_native_weighted_field(self, spec, field_name: str, field_spec: dict[str, Any]) -> dg.DataGenerator:
+    def _add_native_weighted_field(
+        self, spec, field_name: str, field_spec: dict[str, Any]
+    ) -> dg.DataGenerator:
         """Add a field using dbldatagen's native values/weights (no SQL CASE bias)."""
         field_type = self._get_spark_type(field_spec)
-        values = field_spec.get('values')
-        weights = field_spec.get('weights')
-        percent_nulls = field_spec.get('percent_nulls', 0)
+        values = field_spec.get("values")
+        weights = field_spec.get("weights")
+        percent_nulls = field_spec.get("percent_nulls", 0)
 
-        kwargs = {'values': values, 'random': True}
+        kwargs = {"values": values, "random": True}
         if weights:
-            kwargs['weights'] = weights
+            kwargs["weights"] = weights
         if percent_nulls and percent_nulls > 0:
-            kwargs['percentNulls'] = percent_nulls
+            kwargs["percentNulls"] = percent_nulls
 
         return spec.withColumn(field_name, field_type, **kwargs)
 
@@ -262,20 +278,22 @@ class StreamOrchestrator:
         so each event type can have different values/ranges for the same field.
         """
         event_type_field = self._get_event_type_field_name()
-        common_field_names = set(self.config.data.get('common_fields', {}).keys())
+        common_field_names = set(self.config.data.get("common_fields", {}).keys())
 
         for field_name, event_type_specs in field_registry.items():
             # Skip fields that are already added as common fields
             if field_name in common_field_names:
-                logger.debug(f"Skipping conditional field '{field_name}' (already in common_fields)")
+                logger.debug(
+                    f"Skipping conditional field '{field_name}' (already in common_fields)"
+                )
                 continue
 
             # Use the first spec to determine field type (all should be same type per validation)
             first_spec = next(iter(event_type_specs.values()))
-            field_type_name = first_spec.get('type')
+            field_type_name = first_spec.get("type")
 
             # Handle nested types (array, struct, map) - use first spec for structure
-            if field_type_name == 'array':
+            if field_type_name == "array":
                 event_types = list(event_type_specs.keys())
                 spec, array_expr, generated_cols = self._process_array_field(
                     spec, field_name, first_spec, event_type_field, event_types
@@ -290,7 +308,7 @@ class StreamOrchestrator:
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
 
-            elif field_type_name == 'struct':
+            elif field_type_name == "struct":
                 event_types = list(event_type_specs.keys())
                 spec, struct_expr, generated_cols = self._process_struct_field(
                     spec, field_name, first_spec, event_type_field, event_types
@@ -305,7 +323,7 @@ class StreamOrchestrator:
                 base_cols = [event_type_field] + generated_cols
                 spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=base_cols)
 
-            elif field_type_name == 'map':
+            elif field_type_name == "map":
                 event_types = list(event_type_specs.keys())
                 spec, map_expr, generated_cols = self._process_map_field(
                     spec, field_name, first_spec, event_type_field, event_types
@@ -317,7 +335,9 @@ class StreamOrchestrator:
                     sql_expr = f"CASE WHEN {event_type_field} IN ('{event_list}') THEN {map_expr} ELSE NULL END"
 
                 field_type = self._get_spark_type(first_spec)
-                spec = spec.withColumn(field_name, field_type, expr=sql_expr, baseColumn=event_type_field)
+                spec = spec.withColumn(
+                    field_name, field_type, expr=sql_expr, baseColumn=event_type_field
+                )
 
             else:
                 # Simple field types - build CASE with separate WHEN per event type
@@ -335,8 +355,8 @@ class StreamOrchestrator:
                 # Each event type gets its own hidden column to avoid collisions.
                 faker_hidden_map: dict[str, str] = {}
                 for event_type_id, field_spec in event_type_specs.items():
-                    if 'faker' in field_spec:
-                        safe_et_id = event_type_id.replace('.', '_')
+                    if "faker" in field_spec:
+                        safe_et_id = event_type_id.replace(".", "_")
                         hidden_name = f"__dsg_faker_{field_name}_{safe_et_id}"
                         text_gen = self._build_faker_text_generator(field_spec)
                         spec = spec.withColumn(hidden_name, "string", text=text_gen, omit=True)
@@ -378,24 +398,28 @@ class StreamOrchestrator:
                 base_columns: ["event_timestamp"]
                 percent_nulls: 0.05  # optional
         """
-        derived_fields = self.config.data.get('derived_fields', {})
+        derived_fields = self.config.data.get("derived_fields", {})
 
         for field_name, field_spec in derived_fields.items():
-            raw_expr = field_spec.get('expr')
+            raw_expr = field_spec.get("expr")
             if not raw_expr:
                 raise ValueError(f"derived_fields.{field_name} must specify 'expr'")
 
             # Apply outlier and null wrapping via the standard pipeline
             final_expr = self._generate_sql_expression(field_spec)
             field_type = self._get_spark_type(field_spec)
-            base_columns = field_spec.get('base_columns', [])
+            base_columns = field_spec.get("base_columns", [])
 
             if base_columns:
-                spec = spec.withColumn(field_name, field_type, expr=final_expr, baseColumn=base_columns)
+                spec = spec.withColumn(
+                    field_name, field_type, expr=final_expr, baseColumn=base_columns
+                )
             else:
                 spec = spec.withColumn(field_name, field_type, expr=final_expr)
 
-            logger.debug(f"Added derived field '{field_name}' (type={field_type}, base={base_columns})")
+            logger.debug(
+                f"Added derived field '{field_name}' (type={field_type}, base={base_columns})"
+            )
 
         return spec
 
@@ -407,9 +431,9 @@ class StreamOrchestrator:
         same field name (e.g., error_type = 'FATAL' vs 'NON_FATAL').
         """
         registry = {}
-        for event_type in self.config.data['event_types']:
-            event_type_id = event_type['event_type_id']
-            for field_name, field_spec in event_type.get('fields', {}).items():
+        for event_type in self.config.data["event_types"]:
+            event_type_id = event_type["event_type_id"]
+            for field_name, field_spec in event_type.get("fields", {}).items():
                 if field_name not in registry:
                     registry[field_name] = {}
                 # Store spec per event type (not merged!)
@@ -430,8 +454,8 @@ class StreamOrchestrator:
                 "Install it with: pip install faker  "
                 "(pre-installed on Databricks Runtime 13.3+)"
             )
-        method = field_spec['faker']
-        args = field_spec.get('faker_args', {})
+        method = field_spec["faker"]
+        args = field_spec.get("faker_args", {})
         return fakerText(method, **args)
 
     def _add_faker_hidden_column(self, spec, field_name: str, field_spec: dict[str, Any]):
@@ -453,14 +477,16 @@ class StreamOrchestrator:
         expression, to avoid the sequential-rand() bias where each WHEN branch
         evaluates rand() independently.
         """
-        if 'expr' in field_spec:
+        if "expr" in field_spec:
             return False
-        if 'faker' in field_spec:
+        if "faker" in field_spec:
             return False
-        values = field_spec.get('values', [])
+        values = field_spec.get("values", [])
         return len(values) > 1
 
-    def _generate_sql_expression(self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
+    def _generate_sql_expression(
+        self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None
+    ) -> str:
         """
         Generate SQL expression for field generation.
 
@@ -484,22 +510,22 @@ class StreamOrchestrator:
         # Uses a two-level CASE so the total outlier rate is controlled by a
         # single rand() gate, avoiding the sequential-rand() bias where each
         # WHEN branch evaluates rand() independently.
-        outliers = field_spec.get('outliers', [])
+        outliers = field_spec.get("outliers", [])
         if outliers:
-            total_outlier_pct = sum(o['percent'] for o in outliers)
+            total_outlier_pct = sum(o["percent"] for o in outliers)
             if len(outliers) == 1:
                 expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {outliers[0]['expr']} ELSE {expr} END"
             else:
                 inner = "CASE "
                 cumulative = 0.0
                 for outlier in outliers:
-                    cumulative += outlier['percent'] / total_outlier_pct
+                    cumulative += outlier["percent"] / total_outlier_pct
                     inner += f"WHEN rand() < {cumulative} THEN {outlier['expr']} "
                 inner += f"ELSE {outliers[-1]['expr']} END"
                 expr = f"CASE WHEN rand() < {total_outlier_pct} THEN {inner} ELSE {expr} END"
 
         # Layer 2: Null injection
-        percent_nulls = field_spec.get('percent_nulls', 0)
+        percent_nulls = field_spec.get("percent_nulls", 0)
         if percent_nulls and percent_nulls > 0:
             expr = f"CASE WHEN rand() < {percent_nulls} THEN NULL ELSE {expr} END"
 
@@ -507,22 +533,22 @@ class StreamOrchestrator:
 
     def _format_sql_literal(self, value, field_spec: dict[str, Any]) -> str:
         """Format a Python value as a SQL literal appropriate for the field type."""
-        field_type = field_spec.get('type')
-        if field_type == 'string':
+        field_type = field_spec.get("type")
+        if field_type == "string":
             return f"'{value}'"
-        elif field_type == 'boolean':
-            return 'true' if value else 'false'
-        elif field_type in ('int', 'long', 'short', 'byte'):
+        elif field_type == "boolean":
+            return "true" if value else "false"
+        elif field_type in ("int", "long", "short", "byte"):
             return str(int(value))
-        elif field_type in ('float', 'double'):
+        elif field_type in ("float", "double"):
             return str(float(value))
-        elif field_type == 'decimal':
-            precision = field_spec.get('precision', 10)
-            scale = field_spec.get('scale', 2)
+        elif field_type == "decimal":
+            precision = field_spec.get("precision", 10)
+            scale = field_spec.get("scale", 2)
             return f"CAST({value} AS DECIMAL({precision},{scale}))"
-        elif field_type == 'timestamp':
+        elif field_type == "timestamp":
             return f"TIMESTAMP '{value}'"
-        elif field_type == 'date':
+        elif field_type == "date":
             return f"DATE '{value}'"
         else:
             return str(value)
@@ -533,8 +559,8 @@ class StreamOrchestrator:
         Works for any type — the only difference is how literals are formatted,
         which is handled by _format_sql_literal.
         """
-        values = field_spec['values']
-        weights = field_spec.get('weights')
+        values = field_spec["values"]
+        weights = field_spec.get("weights")
 
         if len(values) == 1:
             return self._format_sql_literal(values[0], field_spec)
@@ -554,11 +580,13 @@ class StreamOrchestrator:
             threshold = 1.0 / len(values)
             sql_expr = "CASE "
             for i, value in enumerate(values):
-                sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN {self._format_sql_literal(value, field_spec)} "
+                sql_expr += f"WHEN {rand_ref} < {(i + 1) * threshold} THEN {self._format_sql_literal(value, field_spec)} "
             sql_expr += f"ELSE {self._format_sql_literal(values[-1], field_spec)} END"
             return sql_expr
 
-    def _generate_value_expression(self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
+    def _generate_value_expression(
+        self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None
+    ) -> str:
         """Generate the core value SQL expression (without null/outlier wrapping).
 
         Resolution order:
@@ -575,97 +603,104 @@ class StreamOrchestrator:
             faker_col: Optional hidden column name containing Faker values.
                        When provided, returns this column reference as the core expression.
         """
-        if 'expr' in field_spec:
-            return field_spec['expr']
+        if "expr" in field_spec:
+            return field_spec["expr"]
 
         if faker_col:
             return faker_col
 
-        field_type = field_spec.get('type')
+        field_type = field_spec.get("type")
 
         # Explicit values list — universal handler for all types.
         # Types that never use values (uuid, binary) are excluded.
-        if 'values' in field_spec and field_type not in ('uuid', 'binary'):
+        if "values" in field_spec and field_type not in ("uuid", "binary"):
             return self._generate_values_expression(field_spec, rand_col=rand_col)
 
         # Type-specific default generation (no explicit values provided)
-        if field_type == 'uuid':
+        if field_type == "uuid":
             return "uuid()"
 
-        elif field_type == 'int':
-            min_val = field_spec.get('range', [0, 100])[0]
-            max_val = field_spec.get('range', [0, 100])[1]
+        elif field_type == "int":
+            min_val = field_spec.get("range", [0, 100])[0]
+            max_val = field_spec.get("range", [0, 100])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS INT)"
 
-        elif field_type == 'float':
-            min_val = field_spec.get('range', [0.0, 100.0])[0]
-            max_val = field_spec.get('range', [0.0, 100.0])[1]
+        elif field_type == "float":
+            min_val = field_spec.get("range", [0.0, 100.0])[0]
+            max_val = field_spec.get("range", [0.0, 100.0])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS FLOAT)"
 
-        elif field_type == 'string':
+        elif field_type == "string":
             return "'value'"
 
-        elif field_type == 'timestamp':
-            begin = field_spec.get('begin')
-            end = field_spec.get('end')
+        elif field_type == "timestamp":
+            begin = field_spec.get("begin")
+            end = field_spec.get("end")
 
             if begin and end:
                 return f"from_unixtime(unix_timestamp('{begin}') + rand() * (unix_timestamp('{end}') - unix_timestamp('{begin}')))"
             else:
                 return "current_timestamp()"
 
-        elif field_type == 'boolean':
+        elif field_type == "boolean":
             rand_ref = rand_col if rand_col else "rand()"
             return f"CASE WHEN {rand_ref} < 0.5 THEN true ELSE false END"
 
-        elif field_type == 'long':
-            min_val = field_spec.get('range', [0, 9223372036854775807])[0]
-            max_val = field_spec.get('range', [0, 9223372036854775807])[1]
+        elif field_type == "long":
+            min_val = field_spec.get("range", [0, 9223372036854775807])[0]
+            max_val = field_spec.get("range", [0, 9223372036854775807])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS BIGINT)"
 
-        elif field_type == 'double':
-            min_val = field_spec.get('range', [0.0, 100.0])[0]
-            max_val = field_spec.get('range', [0.0, 100.0])[1]
+        elif field_type == "double":
+            min_val = field_spec.get("range", [0.0, 100.0])[0]
+            max_val = field_spec.get("range", [0.0, 100.0])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS DOUBLE)"
 
-        elif field_type == 'date':
-            begin = field_spec.get('begin', '2020-01-01')
-            end = field_spec.get('end', '2024-12-31')
+        elif field_type == "date":
+            begin = field_spec.get("begin", "2020-01-01")
+            end = field_spec.get("end", "2024-12-31")
             return f"to_date(from_unixtime(unix_timestamp('{begin}') + rand() * (unix_timestamp('{end}') - unix_timestamp('{begin}'))))"
 
-        elif field_type == 'decimal':
-            precision = field_spec.get('precision', 10)
-            scale = field_spec.get('scale', 2)
-            min_val = field_spec.get('range', [0, 99999999.99])[0]
-            max_val = field_spec.get('range', [0, 99999999.99])[1]
+        elif field_type == "decimal":
+            precision = field_spec.get("precision", 10)
+            scale = field_spec.get("scale", 2)
+            min_val = field_spec.get("range", [0, 99999999.99])[0]
+            max_val = field_spec.get("range", [0, 99999999.99])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS DECIMAL({precision},{scale}))"
 
-        elif field_type == 'byte':
-            min_val = field_spec.get('range', [0, 127])[0]
-            max_val = field_spec.get('range', [0, 127])[1]
+        elif field_type == "byte":
+            min_val = field_spec.get("range", [0, 127])[0]
+            max_val = field_spec.get("range", [0, 127])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS TINYINT)"
 
-        elif field_type == 'short':
-            min_val = field_spec.get('range', [0, 32767])[0]
-            max_val = field_spec.get('range', [0, 32767])[1]
+        elif field_type == "short":
+            min_val = field_spec.get("range", [0, 32767])[0]
+            max_val = field_spec.get("range", [0, 32767])[1]
             return f"CAST(rand() * ({max_val} - {min_val}) + {min_val} AS SMALLINT)"
 
-        elif field_type == 'binary':
+        elif field_type == "binary":
             return "unhex(replace(uuid(), '-', ''))"
 
         else:
             raise ValueError(f"Unsupported field type: {field_type}")
 
-    def _process_array_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_array_field(
+        self,
+        spec,
+        field_name: str,
+        field_spec: dict[str, Any],
+        event_type_field: str,
+        event_types: list,
+    ) -> tuple:
         """
         Process array field by generating multiple columns and combining them.
 
         Returns:
             tuple: (spec with array columns added, array_field_names)
         """
-        item_type = field_spec.get('item_type', 'string')
-        num_features = field_spec.get('num_features', [1, 5])
-        values = field_spec.get('values', [])
+        item_type = field_spec.get("item_type", "string")
+        num_features = field_spec.get("num_features", [1, 5])
+        values = field_spec.get("values", [])
 
         # Determine min and max array size
         if isinstance(num_features, list):
@@ -680,13 +715,13 @@ class StreamOrchestrator:
             element_columns.append(element_col_name)
 
             # Create field spec for array element (omit None values so defaults apply)
-            element_spec = {'type': item_type}
+            element_spec = {"type": item_type}
             if values:
-                element_spec['values'] = values
-            if field_spec.get('range') is not None:
-                element_spec['range'] = field_spec['range']
-            if field_spec.get('weights') is not None:
-                element_spec['weights'] = field_spec['weights']
+                element_spec["values"] = values
+            if field_spec.get("range") is not None:
+                element_spec["range"] = field_spec["range"]
+            if field_spec.get("weights") is not None:
+                element_spec["weights"] = field_spec["weights"]
 
             # Generate SQL for element
             element_sql = self._generate_sql_expression(element_spec)
@@ -699,10 +734,13 @@ class StreamOrchestrator:
             else:
                 conditional_sql = element_sql
 
-            spec = spec.withColumn(element_col_name, element_spark_type,
-                                 expr=conditional_sql,
-                                 baseColumn=event_type_field,
-                                 omit=True)
+            spec = spec.withColumn(
+                element_col_name,
+                element_spark_type,
+                expr=conditional_sql,
+                baseColumn=event_type_field,
+                omit=True,
+            )
 
         # Create array column combining elements with variable length
         array_elements = ", ".join(element_columns)
@@ -717,7 +755,14 @@ class StreamOrchestrator:
 
         return spec, array_expr, element_columns
 
-    def _process_struct_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_struct_field(
+        self,
+        spec,
+        field_name: str,
+        field_spec: dict[str, Any],
+        event_type_field: str,
+        event_types: list,
+    ) -> tuple:
         """
         Process struct field by recursively generating nested fields.
 
@@ -727,22 +772,22 @@ class StreamOrchestrator:
         Returns:
             tuple: (spec with struct fields added, struct_expr)
         """
-        struct_fields = field_spec.get('fields', {})
+        struct_fields = field_spec.get("fields", {})
         struct_parts = []
         generated_columns = []
 
         for sub_field_name, sub_field_spec in struct_fields.items():
             sub_col_name = f"{field_name}_{sub_field_name}"
-            sub_field_type = sub_field_spec.get('type')
+            sub_field_type = sub_field_spec.get("type")
 
             # Recursively handle nested types
-            if sub_field_type == 'struct':
+            if sub_field_type == "struct":
                 spec, sub_struct_expr, sub_generated = self._process_struct_field(
                     spec, sub_col_name, sub_field_spec, event_type_field, event_types
                 )
                 struct_parts.append(f"'{sub_field_name}', {sub_struct_expr}")
                 generated_columns.extend(sub_generated)
-            elif sub_field_type == 'array':
+            elif sub_field_type == "array":
                 spec, sub_array_expr, sub_generated = self._process_array_field(
                     spec, sub_col_name, sub_field_spec, event_type_field, event_types
                 )
@@ -753,8 +798,10 @@ class StreamOrchestrator:
                 generated_columns.append(sub_col_name)
                 rand_col_name = None
                 faker_col_name = None
-                if 'faker' in sub_field_spec:
-                    spec, faker_col_name = self._add_faker_hidden_column(spec, sub_col_name, sub_field_spec)
+                if "faker" in sub_field_spec:
+                    spec, faker_col_name = self._add_faker_hidden_column(
+                        spec, sub_col_name, sub_field_spec
+                    )
                     generated_columns.append(faker_col_name)
                 elif self._field_needs_rand_column(sub_field_spec):
                     rand_col_name = f"__dsg_rand_{sub_col_name}"
@@ -779,10 +826,9 @@ class StreamOrchestrator:
                 if faker_col_name:
                     base.append(faker_col_name)
 
-                spec = spec.withColumn(sub_col_name, sub_spark_type,
-                                     expr=conditional_sql,
-                                     baseColumn=base,
-                                     omit=True)
+                spec = spec.withColumn(
+                    sub_col_name, sub_spark_type, expr=conditional_sql, baseColumn=base, omit=True
+                )
                 struct_parts.append(f"'{sub_field_name}', {sub_col_name}")
 
         # Build named_struct expression
@@ -790,7 +836,14 @@ class StreamOrchestrator:
 
         return spec, struct_expr, generated_columns
 
-    def _process_map_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_map_field(
+        self,
+        spec,
+        field_name: str,
+        field_spec: dict[str, Any],
+        event_type_field: str,
+        event_types: list,
+    ) -> tuple:
         """
         Process map field by generating discrete map values.
 
@@ -800,12 +853,12 @@ class StreamOrchestrator:
         Returns:
             tuple: (spec with map column added, map_expr, generated_cols)
         """
-        values = field_spec.get('values', [])
-        weights = field_spec.get('weights')
+        values = field_spec.get("values", [])
+        weights = field_spec.get("weights")
 
         if not values:
-            field_spec.get('key_type', 'string')
-            field_spec.get('value_type', 'string')
+            field_spec.get("key_type", "string")
+            field_spec.get("value_type", "string")
             return spec, "map()", []
 
         generated_cols = []
@@ -834,7 +887,9 @@ class StreamOrchestrator:
             sql_expr = "CASE "
             for i, value_dict in enumerate(values):
                 map_pairs = [f"'{k}', '{v}'" for k, v in value_dict.items()]
-                sql_expr += f"WHEN {rand_ref} < {(i+1) * threshold} THEN map({', '.join(map_pairs)}) "
+                sql_expr += (
+                    f"WHEN {rand_ref} < {(i + 1) * threshold} THEN map({', '.join(map_pairs)}) "
+                )
             map_pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(map_pairs)}) END"
 
@@ -842,55 +897,55 @@ class StreamOrchestrator:
 
     def _get_spark_type(self, field_spec: dict[str, Any]) -> str:
         """Map field type to Spark SQL type string."""
-        field_type = field_spec.get('type')
+        field_type = field_spec.get("type")
 
         # Handle decimal with precision/scale
-        if field_type == 'decimal':
-            precision = field_spec.get('precision', 10)
-            scale = field_spec.get('scale', 2)
-            return f'decimal({precision},{scale})'
+        if field_type == "decimal":
+            precision = field_spec.get("precision", 10)
+            scale = field_spec.get("scale", 2)
+            return f"decimal({precision},{scale})"
 
         # Handle array type
-        if field_type == 'array':
-            item_type = field_spec.get('item_type', 'string')
-            item_spec = {'type': item_type}
+        if field_type == "array":
+            item_type = field_spec.get("item_type", "string")
+            item_spec = {"type": item_type}
             item_spark_type = self._get_spark_type(item_spec)
-            return f'array<{item_spark_type}>'
+            return f"array<{item_spark_type}>"
 
         # Handle map type
-        if field_type == 'map':
-            key_type = field_spec.get('key_type', 'string')
-            value_type = field_spec.get('value_type', 'string')
-            key_spec = {'type': key_type}
-            value_spec = {'type': value_type}
+        if field_type == "map":
+            key_type = field_spec.get("key_type", "string")
+            value_type = field_spec.get("value_type", "string")
+            key_spec = {"type": key_type}
+            value_spec = {"type": value_type}
             key_spark_type = self._get_spark_type(key_spec)
             value_spark_type = self._get_spark_type(value_spec)
-            return f'map<{key_spark_type},{value_spark_type}>'
+            return f"map<{key_spark_type},{value_spark_type}>"
 
         # Handle struct type - need to build recursively
-        if field_type == 'struct':
-            fields = field_spec.get('fields', {})
+        if field_type == "struct":
+            fields = field_spec.get("fields", {})
             field_defs = []
             for sub_name, sub_spec in fields.items():
                 sub_type = self._get_spark_type(sub_spec)
-                field_defs.append(f'{sub_name}:{sub_type}')
+                field_defs.append(f"{sub_name}:{sub_type}")
             return f"struct<{','.join(field_defs)}>"
 
         type_map = {
-            'uuid': 'string',
-            'int': 'int',
-            'float': 'float',
-            'string': 'string',
-            'timestamp': 'timestamp',
-            'boolean': 'boolean',
-            'long': 'bigint',
-            'double': 'double',
-            'date': 'date',
-            'byte': 'tinyint',
-            'short': 'smallint',
-            'binary': 'binary'
+            "uuid": "string",
+            "int": "int",
+            "float": "float",
+            "string": "string",
+            "timestamp": "timestamp",
+            "boolean": "boolean",
+            "long": "bigint",
+            "double": "double",
+            "date": "date",
+            "byte": "tinyint",
+            "short": "smallint",
+            "binary": "binary",
         }
-        return type_map.get(field_type, 'string')
+        return type_map.get(field_type, "string")
 
     def _serialize_wide_schema(self, df: DataFrame) -> DataFrame:
         """
@@ -900,33 +955,31 @@ class StreamOrchestrator:
         - partition_key: Top-level column for Kinesis routing
         - data: Flat JSON with ALL fields (goes into Kinesis Data field)
         """
-        partition_key_field = self.config.data['sink_config'].get('partition_key_field')
+        partition_key_field = self.config.data["sink_config"].get("partition_key_field")
         if not partition_key_field:
             raise ValueError(
                 "sink_config.partition_key_field is required for serialized output. "
                 "Set it to a visible column name (e.g., 'event_name')."
             )
 
-        timestamp_field = 'event_timestamp' if 'event_timestamp' in df.columns else None
+        timestamp_field = "event_timestamp" if "event_timestamp" in df.columns else None
         if not timestamp_field:
-            for field_name, field_spec in self.config.data.get('common_fields', {}).items():
-                if field_spec.get('type') == 'timestamp' and field_name in df.columns:
+            for field_name, field_spec in self.config.data.get("common_fields", {}).items():
+                if field_spec.get("type") == "timestamp" and field_name in df.columns:
                     timestamp_field = field_name
                     break
         if not timestamp_field:
-            df = df.withColumn('event_timestamp', current_timestamp())
-            timestamp_field = 'event_timestamp'
+            df = df.withColumn("event_timestamp", current_timestamp())
+            timestamp_field = "event_timestamp"
 
         if partition_key_field not in df.columns:
             raise ValueError(f"Partition key field '{partition_key_field}' not found in DataFrame")
 
         payload_cols = list(df.columns)
 
-        df_serialized = df.withColumn("data",
-            to_json(struct(*[col(c) for c in payload_cols]), {"ignoreNullFields": "true"}))
+        df_serialized = df.withColumn(
+            "data", to_json(struct(*[col(c) for c in payload_cols]), {"ignoreNullFields": "true"})
+        )
 
         # Return partition_key for routing and data for Kinesis Data field
-        return df_serialized.select(
-            col(partition_key_field).alias("partition_key"),
-            col("data")
-        )
+        return df_serialized.select(col(partition_key_field).alias("partition_key"), col("data"))

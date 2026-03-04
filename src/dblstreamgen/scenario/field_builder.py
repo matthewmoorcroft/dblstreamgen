@@ -369,7 +369,9 @@ def _parse_interval(interval_str: str) -> str:
 
 
 def _wrap_with_outliers_and_nulls(
-    field_spec: dict, base_kwargs: dict, spark_type: str  # noqa: ARG001
+    field_spec: dict,
+    base_kwargs: dict,
+    spark_type: str,  # noqa: ARG001
 ) -> FieldResolution:
     """When outliers are present, fall back to SQL expr wrapping.
 

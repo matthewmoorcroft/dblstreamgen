@@ -46,14 +46,16 @@ class TestBaselinePlan:
         assert set(p.event_types) == {"a", "b", "c"}
 
     def test_zero_weight_excluded_from_plan(self):
-        config = Config.from_dict({
-            "generation_mode": "streaming",
-            "scenario": {"duration_seconds": 60, "baseline_rows_per_second": 500},
-            "event_types": [
-                {"event_type_id": "active", "weight": 1.0, "fields": {}},
-                {"event_type_id": "dormant", "weight": 0.0, "fields": {}},
-            ],
-        })
+        config = Config.from_dict(
+            {
+                "generation_mode": "streaming",
+                "scenario": {"duration_seconds": 60, "baseline_rows_per_second": 500},
+                "event_types": [
+                    {"event_type_id": "active", "weight": 1.0, "fields": {}},
+                    {"event_type_id": "dormant", "weight": 0.0, "fields": {}},
+                ],
+            }
+        )
         runner = ScenarioRunner(FakeBuilder(), config)
         plans = runner.plan()
 
@@ -62,15 +64,17 @@ class TestBaselinePlan:
 
 class TestSpikePlan:
     def test_spike_produces_two_entries(self):
-        config = _streaming_config(scenario={
-            "duration_seconds": 300,
-            "baseline_rows_per_second": 1000,
-            "spike": {
-                "at_seconds": 60,
-                "for_seconds": 120,
-                "additional_rows_per_second": 5000,
-            },
-        })
+        config = _streaming_config(
+            scenario={
+                "duration_seconds": 300,
+                "baseline_rows_per_second": 1000,
+                "spike": {
+                    "at_seconds": 60,
+                    "for_seconds": 120,
+                    "additional_rows_per_second": 5000,
+                },
+            }
+        )
         runner = ScenarioRunner(FakeBuilder(), config)
         plans = runner.plan()
 
@@ -82,19 +86,21 @@ class TestSpikePlan:
         assert plans[1].rows_per_second == 5000
 
     def test_targeted_spike_subset(self):
-        config = _streaming_config(scenario={
-            "duration_seconds": 300,
-            "baseline_rows_per_second": 1000,
-            "spike": {
-                "at_seconds": 10,
-                "for_seconds": 20,
-                "additional_rows_per_second": 3000,
-                "targets": [
-                    {"event_type_id": "a", "weight": 0.80},
-                    {"event_type_id": "b", "weight": 0.20},
-                ],
-            },
-        })
+        config = _streaming_config(
+            scenario={
+                "duration_seconds": 300,
+                "baseline_rows_per_second": 1000,
+                "spike": {
+                    "at_seconds": 10,
+                    "for_seconds": 20,
+                    "additional_rows_per_second": 3000,
+                    "targets": [
+                        {"event_type_id": "a", "weight": 0.80},
+                        {"event_type_id": "b", "weight": 0.20},
+                    ],
+                },
+            }
+        )
         runner = ScenarioRunner(FakeBuilder(), config)
         plans = runner.plan()
 
@@ -106,13 +112,15 @@ class TestSpikePlan:
 
 class TestPlanBatchRejection:
     def test_batch_mode_raises(self):
-        config = Config.from_dict({
-            "generation_mode": "batch",
-            "scenario": {"total_rows": 10000},
-            "event_types": [
-                {"event_type_id": "a", "weight": 1.0, "fields": {}},
-            ],
-        })
+        config = Config.from_dict(
+            {
+                "generation_mode": "batch",
+                "scenario": {"total_rows": 10000},
+                "event_types": [
+                    {"event_type_id": "a", "weight": 1.0, "fields": {}},
+                ],
+            }
+        )
         runner = ScenarioRunner(FakeBuilder(), config)
         with pytest.raises(ConfigurationError, match="streaming"):
             runner.plan()
@@ -125,19 +133,21 @@ class TestRampPlan:
             "additional_rows_per_second": 1000,
         }
         ramp.update(ramp_overrides)
-        return Config.from_dict({
-            "generation_mode": "streaming",
-            "scenario": {
-                "duration_seconds": 120,
-                "baseline_rows_per_second": 1000,
-                "ramp": ramp,
-            },
-            "common_fields": {"event_name": {"event_type_id": True}},
-            "event_types": [
-                {"event_type_id": "a", "weight": 0.60, "fields": {}},
-                {"event_type_id": "b", "weight": 0.40, "fields": {}},
-            ],
-        })
+        return Config.from_dict(
+            {
+                "generation_mode": "streaming",
+                "scenario": {
+                    "duration_seconds": 120,
+                    "baseline_rows_per_second": 1000,
+                    "ramp": ramp,
+                },
+                "common_fields": {"event_name": {"event_type_id": True}},
+                "event_types": [
+                    {"event_type_id": "a", "weight": 0.60, "fields": {}},
+                    {"event_type_id": "b", "weight": 0.40, "fields": {}},
+                ],
+            }
+        )
 
     def test_ramp_produces_baseline_plus_steps(self):
         config = self._ramp_config()
@@ -204,16 +214,22 @@ class TestRampPlan:
 
     def test_ramp_and_spike_spike_ignored(self):
         """When both ramp and spike are present, ramp takes precedence."""
-        config = Config.from_dict({
-            "generation_mode": "streaming",
-            "scenario": {
-                "duration_seconds": 120,
-                "baseline_rows_per_second": 1000,
-                "ramp": {"step_seconds": 30, "additional_rows_per_second": 1000},
-                "spike": {"at_seconds": 10, "for_seconds": 20, "additional_rows_per_second": 5000},
-            },
-            "event_types": [{"event_type_id": "a", "weight": 1.0, "fields": {}}],
-        })
+        config = Config.from_dict(
+            {
+                "generation_mode": "streaming",
+                "scenario": {
+                    "duration_seconds": 120,
+                    "baseline_rows_per_second": 1000,
+                    "ramp": {"step_seconds": 30, "additional_rows_per_second": 1000},
+                    "spike": {
+                        "at_seconds": 10,
+                        "for_seconds": 20,
+                        "additional_rows_per_second": 5000,
+                    },
+                },
+                "event_types": [{"event_type_id": "a", "weight": 1.0, "fields": {}}],
+            }
+        )
         plans = ScenarioRunner(FakeBuilder(), config).plan()
         names = [p.name for p in plans]
         assert "spike" not in names
@@ -221,18 +237,28 @@ class TestRampPlan:
 
     def test_plan_populates_hidden_column_count(self):
         """hidden_column_count reflects actual dedup analysis (not always 0)."""
-        config = Config.from_dict({
-            "generation_mode": "streaming",
-            "scenario": {"duration_seconds": 60, "baseline_rows_per_second": 1000},
-            "event_types": [
-                {"event_type_id": "a", "weight": 0.50, "fields": {
-                    "price": {"type": "float", "range": [1.0, 100.0]},
-                }},
-                {"event_type_id": "b", "weight": 0.50, "fields": {
-                    "price": {"type": "float", "range": [1.0, 100.0]},
-                }},
-            ],
-        })
+        config = Config.from_dict(
+            {
+                "generation_mode": "streaming",
+                "scenario": {"duration_seconds": 60, "baseline_rows_per_second": 1000},
+                "event_types": [
+                    {
+                        "event_type_id": "a",
+                        "weight": 0.50,
+                        "fields": {
+                            "price": {"type": "float", "range": [1.0, 100.0]},
+                        },
+                    },
+                    {
+                        "event_type_id": "b",
+                        "weight": 0.50,
+                        "fields": {
+                            "price": {"type": "float", "range": [1.0, 100.0]},
+                        },
+                    },
+                ],
+            }
+        )
         plans = ScenarioRunner(FakeBuilder(), config).plan()
         # 2 event types share identical spec → 1 hidden column
         assert plans[0].hidden_column_count == 1

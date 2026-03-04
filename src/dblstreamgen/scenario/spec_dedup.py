@@ -153,14 +153,10 @@ class SpecDeduplicator:
             parts["weights"] = ",".join(f"{w:.6f}" for w in normalized)
 
         if "begin" in field_spec:
-            parts["begin"] = _normalize_temporal(
-                field_spec["begin"], field_spec.get("type")
-            )
+            parts["begin"] = _normalize_temporal(field_spec["begin"], field_spec.get("type"))
 
         if "end" in field_spec:
-            parts["end"] = _normalize_temporal(
-                field_spec["end"], field_spec.get("type")
-            )
+            parts["end"] = _normalize_temporal(field_spec["end"], field_spec.get("type"))
 
         if "interval" in field_spec:
             parts["interval"] = str(field_spec["interval"])
@@ -184,9 +180,7 @@ class SpecDeduplicator:
             parts["faker"] = str(field_spec["faker"])
             if "faker_args" in field_spec:
                 args = field_spec["faker_args"]
-                parts["faker_args"] = ",".join(
-                    f"{k}={v}" for k, v in sorted(args.items())
-                )
+                parts["faker_args"] = ",".join(f"{k}={v}" for k, v in sorted(args.items()))
 
         if "precision" in field_spec:
             parts["precision"] = str(int(field_spec["precision"]))

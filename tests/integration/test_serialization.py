@@ -10,22 +10,32 @@ from dblstreamgen.serialization import serialize_to_json
 
 
 def _build_wide_df(spark):
-    config = Config.from_dict({
-        "generation_mode": "batch",
-        "scenario": {"total_rows": 500, "partitions": 2},
-        "common_fields": {
-            "event_name": {"event_type_id": True},
-            "event_key": {"type": "string", "values": ["k1", "k2"]},
-        },
-        "event_types": [
-            {"event_type_id": "a", "weight": 0.50, "fields": {
-                "val": {"type": "int", "range": [1, 10]},
-            }},
-            {"event_type_id": "b", "weight": 0.50, "fields": {
-                "name": {"type": "string", "values": ["alice", "bob"]},
-            }},
-        ],
-    })
+    config = Config.from_dict(
+        {
+            "generation_mode": "batch",
+            "scenario": {"total_rows": 500, "partitions": 2},
+            "common_fields": {
+                "event_name": {"event_type_id": True},
+                "event_key": {"type": "string", "values": ["k1", "k2"]},
+            },
+            "event_types": [
+                {
+                    "event_type_id": "a",
+                    "weight": 0.50,
+                    "fields": {
+                        "val": {"type": "int", "range": [1, 10]},
+                    },
+                },
+                {
+                    "event_type_id": "b",
+                    "weight": 0.50,
+                    "fields": {
+                        "name": {"type": "string", "values": ["alice", "bob"]},
+                    },
+                },
+            ],
+        }
+    )
     return ScenarioBuilder(spark, config).build()
 
 
@@ -52,9 +62,11 @@ class TestJsonSerialization:
         """ignoreNullFields should omit conditional null fields from JSON."""
         wide = _build_wide_df(spark)
         narrow = serialize_to_json(wide, "event_key")
-        b_rows = narrow.filter(
-            F.get_json_object(F.col("data"), "$.event_name") == "b"
-        ).limit(10).collect()
+        b_rows = (
+            narrow.filter(F.get_json_object(F.col("data"), "$.event_name") == "b")
+            .limit(10)
+            .collect()
+        )
         for row in b_rows:
             parsed = json.loads(row["data"])
             assert "val" not in parsed, "Conditional null 'val' should be omitted"

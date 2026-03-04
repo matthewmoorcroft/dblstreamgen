@@ -1,0 +1,14 @@
+Copyright (2024) Databricks, Inc.
+
+This library (dblstreamgen) is governed by the Databricks License, found in LICENSE.
+By using this library, you agree to the terms of that license.
+
+This software is developed and maintained by Databricks.
+
+This project includes the following third-party components:
+
+pyspark - Apache 2.0
+  https://github.com/apache/spark
+
+dbldatagen - Databricks License
+  https://github.com/databrickslabs/dbldatagen

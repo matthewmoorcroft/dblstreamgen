@@ -30,28 +30,28 @@ class TestSignatureComputation:
 
     def test_weight_normalization(self):
         """[6, 3, 1] and [60, 30, 10] normalize to the same ratios."""
-        s1 = SpecDeduplicator.compute_signature({
-            "type": "string", "values": ["a", "b", "c"], "weights": [6, 3, 1]
-        })
-        s2 = SpecDeduplicator.compute_signature({
-            "type": "string", "values": ["a", "b", "c"], "weights": [60, 30, 10]
-        })
+        s1 = SpecDeduplicator.compute_signature(
+            {"type": "string", "values": ["a", "b", "c"], "weights": [6, 3, 1]}
+        )
+        s2 = SpecDeduplicator.compute_signature(
+            {"type": "string", "values": ["a", "b", "c"], "weights": [60, 30, 10]}
+        )
         assert s1 == s2
 
     def test_weight_different_ratios(self):
-        s1 = SpecDeduplicator.compute_signature({
-            "type": "string", "values": ["a", "b"], "weights": [1, 1]
-        })
-        s2 = SpecDeduplicator.compute_signature({
-            "type": "string", "values": ["a", "b"], "weights": [9, 1]
-        })
+        s1 = SpecDeduplicator.compute_signature(
+            {"type": "string", "values": ["a", "b"], "weights": [1, 1]}
+        )
+        s2 = SpecDeduplicator.compute_signature(
+            {"type": "string", "values": ["a", "b"], "weights": [9, 1]}
+        )
         assert s1 != s2
 
     def test_percent_nulls_included(self):
         s1 = SpecDeduplicator.compute_signature({"type": "int", "range": [0, 10]})
-        s2 = SpecDeduplicator.compute_signature({
-            "type": "int", "range": [0, 10], "percent_nulls": 0.05
-        })
+        s2 = SpecDeduplicator.compute_signature(
+            {"type": "int", "range": [0, 10], "percent_nulls": 0.05}
+        )
         assert s1 != s2
 
     def test_faker_included(self):
@@ -60,12 +60,12 @@ class TestSignatureComputation:
         assert s1 != s2
 
     def test_temporal_normalization(self):
-        s1 = SpecDeduplicator.compute_signature({
-            "type": "timestamp", "begin": "2024-01-01 00:00:00", "end": "2024-12-31 23:59:59"
-        })
-        s2 = SpecDeduplicator.compute_signature({
-            "type": "timestamp", "begin": "2024-01-01 00:00:00", "end": "2024-12-31 23:59:59"
-        })
+        s1 = SpecDeduplicator.compute_signature(
+            {"type": "timestamp", "begin": "2024-01-01 00:00:00", "end": "2024-12-31 23:59:59"}
+        )
+        s2 = SpecDeduplicator.compute_signature(
+            {"type": "timestamp", "begin": "2024-01-01 00:00:00", "end": "2024-12-31 23:59:59"}
+        )
         assert s1 == s2
 
     def test_type_matters(self):
@@ -79,12 +79,12 @@ class TestSignatureComputation:
         assert s1 != s2
 
     def test_decimal_precision_scale(self):
-        s1 = SpecDeduplicator.compute_signature({
-            "type": "decimal", "precision": 10, "scale": 2, "range": [0, 100]
-        })
-        s2 = SpecDeduplicator.compute_signature({
-            "type": "decimal", "precision": 18, "scale": 6, "range": [0, 100]
-        })
+        s1 = SpecDeduplicator.compute_signature(
+            {"type": "decimal", "precision": 10, "scale": 2, "range": [0, 100]}
+        )
+        s2 = SpecDeduplicator.compute_signature(
+            {"type": "decimal", "precision": 18, "scale": 6, "range": [0, 100]}
+        )
         assert s1 != s2
 
 

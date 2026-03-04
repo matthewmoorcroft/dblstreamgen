@@ -45,9 +45,9 @@ class TestResolveParamsStrategy:
         assert r.spark_type == "tinyint"
 
     def test_decimal_with_range(self):
-        r = FieldBuilder.resolve_params({
-            "type": "decimal", "range": [0, 999.99], "precision": 10, "scale": 2
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "decimal", "range": [0, 999.99], "precision": 10, "scale": 2}
+        )
         assert r.strategy == "native"
         assert r.spark_type == "decimal(10,2)"
 
@@ -58,9 +58,9 @@ class TestResolveParamsStrategy:
         assert "maxValue" in r.dbldatagen_kwargs
 
     def test_string_with_values(self):
-        r = FieldBuilder.resolve_params({
-            "type": "string", "values": ["a", "b", "c"], "weights": [5, 3, 2]
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "string", "values": ["a", "b", "c"], "weights": [5, 3, 2]}
+        )
         assert r.strategy == "native"
         assert r.dbldatagen_kwargs["values"] == ["a", "b", "c"]
         assert r.dbldatagen_kwargs["weights"] == [5, 3, 2]
@@ -78,19 +78,21 @@ class TestResolveParamsStrategy:
         assert r.dbldatagen_kwargs["random"] is True
 
     def test_boolean_with_values(self):
-        r = FieldBuilder.resolve_params({
-            "type": "boolean", "values": [True, False], "weights": [7, 3]
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "boolean", "values": [True, False], "weights": [7, 3]}
+        )
         assert r.strategy == "native"
         assert r.dbldatagen_kwargs["weights"] == [7, 3]
 
     def test_timestamp_historical_random(self):
-        r = FieldBuilder.resolve_params({
-            "type": "timestamp",
-            "begin": "2024-01-01 00:00:00",
-            "end": "2024-12-31 23:59:59",
-            "random": True,
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "timestamp",
+                "begin": "2024-01-01 00:00:00",
+                "end": "2024-12-31 23:59:59",
+                "random": True,
+            }
+        )
         assert r.strategy == "native"
         assert r.dbldatagen_kwargs["begin"] == "2024-01-01 00:00:00"
         assert r.dbldatagen_kwargs["end"] == "2024-12-31 23:59:59"
@@ -98,21 +100,23 @@ class TestResolveParamsStrategy:
         assert r.spark_type == "timestamp"
 
     def test_timestamp_historical_linear(self):
-        r = FieldBuilder.resolve_params({
-            "type": "timestamp",
-            "begin": "2024-06-15 00:00:00",
-            "end": "2024-06-15 23:59:59",
-            "random": False,
-            "interval": "1 second",
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "timestamp",
+                "begin": "2024-06-15 00:00:00",
+                "end": "2024-06-15 23:59:59",
+                "random": False,
+                "interval": "1 second",
+            }
+        )
         assert r.strategy == "native"
         assert r.dbldatagen_kwargs.get("random") is not True
         assert "interval" in r.dbldatagen_kwargs
 
     def test_timestamp_current_mode(self):
-        r = FieldBuilder.resolve_params({
-            "type": "timestamp", "mode": "current", "jitter_seconds": 5
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "timestamp", "mode": "current", "jitter_seconds": 5}
+        )
         assert r.strategy == "sql_expr"
         assert "current_timestamp()" in r.sql_expr
         assert "make_interval" in r.sql_expr
@@ -123,9 +127,9 @@ class TestResolveParamsStrategy:
         assert r.sql_expr == "current_timestamp()"
 
     def test_date_with_begin_end(self):
-        r = FieldBuilder.resolve_params({
-            "type": "date", "begin": "2024-01-01", "end": "2024-12-31"
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "date", "begin": "2024-01-01", "end": "2024-12-31"}
+        )
         assert r.strategy == "native"
         assert r.spark_type == "date"
 
@@ -147,9 +151,9 @@ class TestResolveParamsStrategy:
         assert r.dbldatagen_kwargs["faker_method"] == "name"
 
     def test_faker_with_args(self):
-        r = FieldBuilder.resolve_params({
-            "type": "string", "faker": "bothify", "faker_args": {"text": "##-??"}
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "string", "faker": "bothify", "faker_args": {"text": "##-??"}}
+        )
         assert r.strategy == "faker"
         assert r.dbldatagen_kwargs["faker_args"] == {"text": "##-??"}
 
@@ -159,50 +163,62 @@ class TestResolveParamsStrategy:
         assert r.sql_expr == "concat('a', 'b')"
 
     def test_derived_field_expr_with_base_columns(self):
-        r = FieldBuilder.resolve_params({
-            "type": "boolean", "expr": "amount > 100", "base_columns": ["amount"]
-        })
+        r = FieldBuilder.resolve_params(
+            {"type": "boolean", "expr": "amount > 100", "base_columns": ["amount"]}
+        )
         assert r.strategy == "sql_expr"
         assert r.sql_expr == "amount > 100"
 
 
 class TestResolveParamsComplexTypes:
     def test_struct(self):
-        r = FieldBuilder.resolve_params({
-            "type": "struct",
-            "fields": {"price": {"type": "float"}, "qty": {"type": "int"}},
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "struct",
+                "fields": {"price": {"type": "float"}, "qty": {"type": "int"}},
+            }
+        )
         assert r.strategy == "complex"
 
     def test_array(self):
-        r = FieldBuilder.resolve_params({
-            "type": "array", "item_type": "string",
-            "values": ["a", "b", "c"], "num_features": [1, 3],
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "array",
+                "item_type": "string",
+                "values": ["a", "b", "c"],
+                "num_features": [1, 3],
+            }
+        )
         assert r.strategy == "complex"
 
     def test_map(self):
-        r = FieldBuilder.resolve_params({
-            "type": "map", "key_type": "string", "value_type": "string",
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "map",
+                "key_type": "string",
+                "value_type": "string",
+            }
+        )
         assert r.strategy == "complex"
 
 
 class TestPercentNulls:
     def test_native_percent_nulls_no_outliers(self):
-        r = FieldBuilder.resolve_params({
-            "type": "int", "range": [0, 100], "percent_nulls": 0.1
-        })
+        r = FieldBuilder.resolve_params({"type": "int", "range": [0, 100], "percent_nulls": 0.1})
         assert r.strategy == "native"
         assert r.dbldatagen_kwargs["percentNulls"] == 0.1
 
     def test_percent_nulls_with_outliers_stays_native(self):
         """When outliers present, percent_nulls is removed from kwargs
         (SQL wrapping will handle it in the builder)."""
-        r = FieldBuilder.resolve_params({
-            "type": "int", "range": [0, 100], "percent_nulls": 0.1,
-            "outliers": [{"percent": 0.01, "expr": "-999"}],
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "int",
+                "range": [0, 100],
+                "percent_nulls": 0.1,
+                "outliers": [{"percent": 0.01, "expr": "-999"}],
+            }
+        )
         assert r.strategy == "native"
         assert "percentNulls" not in r.dbldatagen_kwargs
 
@@ -215,9 +231,7 @@ class TestSparkTypeResolution:
         assert FieldBuilder.resolve_params({"type": "long"}).spark_type == "bigint"
 
     def test_decimal(self):
-        r = FieldBuilder.resolve_params({
-            "type": "decimal", "precision": 18, "scale": 6
-        })
+        r = FieldBuilder.resolve_params({"type": "decimal", "precision": 18, "scale": 6})
         assert r.spark_type == "decimal(18,6)"
 
     def test_array_type(self):
@@ -225,16 +239,16 @@ class TestSparkTypeResolution:
         assert r.spark_type == "array<int>"
 
     def test_map_type(self):
-        r = FieldBuilder.resolve_params({
-            "type": "map", "key_type": "string", "value_type": "int"
-        })
+        r = FieldBuilder.resolve_params({"type": "map", "key_type": "string", "value_type": "int"})
         assert r.spark_type == "map<string,int>"
 
     def test_struct_type(self):
-        r = FieldBuilder.resolve_params({
-            "type": "struct",
-            "fields": {"a": {"type": "int"}, "b": {"type": "string"}},
-        })
+        r = FieldBuilder.resolve_params(
+            {
+                "type": "struct",
+                "fields": {"a": {"type": "int"}, "b": {"type": "string"}},
+            }
+        )
         assert r.spark_type == "struct<a:int,b:string>"
 
 

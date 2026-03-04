@@ -191,8 +191,7 @@ class Config:
             )
         if "generation_mode" not in self.data:
             raise ConfigurationError(
-                "Missing required field: 'generation_mode'.  "
-                "Must be 'streaming' or 'batch'."
+                "Missing required field: 'generation_mode'.  Must be 'streaming' or 'batch'."
             )
         mode = self.data["generation_mode"]
         if mode not in ("streaming", "batch"):
@@ -212,8 +211,8 @@ class Config:
                 "  common_fields:\n"
                 "    is_high_value:\n"
                 "      type: boolean\n"
-                "      expr: \"amount > 200\"\n"
-                "      base_columns: [\"amount\"]\n"
+                '      expr: "amount > 200"\n'
+                '      base_columns: ["amount"]\n'
             )
 
     # -- scenario section -----------------------------------------------
@@ -340,9 +339,7 @@ class Config:
     def _validate_v04_event_types(self) -> None:
         event_types = self.data.get("event_types", [])
         if not event_types:
-            raise ConfigurationError(
-                "At least one event type must be defined in 'event_types'."
-            )
+            raise ConfigurationError("At least one event type must be defined in 'event_types'.")
 
         ids_seen: set = set()
         weight_sum = 0.0
@@ -367,8 +364,7 @@ class Config:
             w = et.get("weight")
             if w is None:
                 raise ConfigurationError(
-                    f"{loc} ('{eid}') missing 'weight'.  "
-                    f"Provide a float weight (e.g., 0.60)."
+                    f"{loc} ('{eid}') missing 'weight'.  Provide a float weight (e.g., 0.60)."
                 )
             if not isinstance(w, (int, float)):
                 raise ConfigurationError(
@@ -423,8 +419,8 @@ class Config:
                     f"Example:\n"
                     f"  {name}:\n"
                     f"    type: boolean\n"
-                    f"    expr: \"amount > 200\"\n"
-                    f"    base_columns: [\"amount\"]"
+                    f'    expr: "amount > 200"\n'
+                    f'    base_columns: ["amount"]'
                 )
             if "type" not in spec:
                 raise ConfigurationError(
@@ -449,8 +445,7 @@ class Config:
         weights = [et.get("weight", 0) for et in event_types]
         if not all(isinstance(w, int) and w > 0 for w in weights):
             raise ConfigurationError(
-                "Event type weights must be positive integers "
-                "(e.g., [6, 3, 1] for 60%/30%/10%)"
+                "Event type weights must be positive integers (e.g., [6, 3, 1] for 60%/30%/10%)"
             )
 
         event_ids = [et["event_type_id"] for et in event_types]
@@ -544,13 +539,9 @@ class Config:
             raise ConfigurationError(f"{location}.outliers must be a list")
         for i, outlier in enumerate(outliers):
             if "percent" not in outlier:
-                raise ConfigurationError(
-                    f"{location}.outliers[{i}] missing required key 'percent'"
-                )
+                raise ConfigurationError(f"{location}.outliers[{i}] missing required key 'percent'")
             if "expr" not in outlier:
-                raise ConfigurationError(
-                    f"{location}.outliers[{i}] missing required key 'expr'"
-                )
+                raise ConfigurationError(f"{location}.outliers[{i}] missing required key 'expr'")
             pct = outlier["percent"]
             if not isinstance(pct, (int, float)) or pct <= 0 or pct >= 1:
                 raise ConfigurationError(
@@ -574,9 +565,7 @@ class Config:
                     f"(int/long/short/byte/float/double/decimal), got type='{ftype}'"
                 )
             if not isinstance(step, (int, float)) or step <= 0:
-                raise ConfigurationError(
-                    f"{location}.step must be a positive number, got {step!r}"
-                )
+                raise ConfigurationError(f"{location}.step must be a positive number, got {step!r}")
 
         if field_spec.get("type") == "struct":
             for sub_name, sub_spec in field_spec.get("fields", {}).items():
@@ -596,8 +585,7 @@ class Config:
             "item_type", "string"
         ):
             raise ConfigurationError(
-                f"Array field '{field_name}' has inconsistent item types between "
-                f"{loc1} and {loc2}."
+                f"Array field '{field_name}' has inconsistent item types between {loc1} and {loc2}."
             )
         if type1 == "map" and (
             spec1.get("key_type", "string") != spec2.get("key_type", "string")
@@ -677,8 +665,7 @@ class Config:
                 )
             if not isinstance(spec["faker"], str) or not spec["faker"]:
                 raise ConfigurationError(
-                    f"{location}: 'faker' must be a non-empty string "
-                    "(Python Faker method name)"
+                    f"{location}: 'faker' must be a non-empty string (Python Faker method name)"
                 )
             faker_args = spec.get("faker_args")
             if faker_args is not None and not isinstance(faker_args, dict):
@@ -728,8 +715,7 @@ class Config:
         for name, spec in self.data.get("derived_fields", {}).items():
             if spec.get("event_type_id"):
                 raise ConfigurationError(
-                    f"derived_fields.{name}: 'event_type_id: true' is only valid "
-                    f"in common_fields"
+                    f"derived_fields.{name}: 'event_type_id: true' is only valid in common_fields"
                 )
 
 

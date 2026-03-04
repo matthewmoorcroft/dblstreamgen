@@ -70,8 +70,7 @@ class ScenarioBuilder:
             )
         if self._hidden_col_count > _HIDDEN_COL_WARNING:
             logger.warning(
-                "Hidden column count (%d) exceeds %d.  "
-                "Consider consolidating field specs.",
+                "Hidden column count (%d) exceeds %d.  Consider consolidating field specs.",
                 self._hidden_col_count,
                 _HIDDEN_COL_WARNING,
             )
@@ -117,9 +116,7 @@ class ScenarioBuilder:
     # Build pipeline
     # ------------------------------------------------------------------
 
-    def _filter_active_types(
-        self, override: Optional[list[dict]] = None
-    ) -> list[dict]:
+    def _filter_active_types(self, override: Optional[list[dict]] = None) -> list[dict]:
         """Exclude weight=0 types. Override replaces config types entirely."""
         source = override if override is not None else self._config.event_types
         return [et for et in source if float(et.get("weight", 0)) > 0]
@@ -173,7 +170,9 @@ class ScenarioBuilder:
         )
 
     def _add_common_fields(
-        self, spec: dg.DataGenerator, active_types: list[dict]  # noqa: ARG002
+        self,
+        spec: dg.DataGenerator,
+        active_types: list[dict],  # noqa: ARG002
     ) -> dg.DataGenerator:
         common = self._config.common_fields
         for field_name, field_spec in common.items():
@@ -212,13 +211,9 @@ class ScenarioBuilder:
             field_type_name = first_spec.get("type")
 
             if field_type_name in ("struct", "array", "map"):
-                spec = self._add_complex_conditional_field(
-                    spec, field_name, event_specs
-                )
+                spec = self._add_complex_conditional_field(spec, field_name, event_specs)
             else:
-                spec = self._add_scalar_conditional_field(
-                    spec, field_name, event_specs
-                )
+                spec = self._add_scalar_conditional_field(spec, field_name, event_specs)
 
         return spec
 
@@ -243,16 +238,12 @@ class ScenarioBuilder:
         spark_type = _resolve_spark_type(first_spec)
 
         has_outliers = any(fs.get("outliers") for fs in event_specs.values())
-        has_percent_nulls = any(
-            fs.get("percent_nulls", 0) > 0 for fs in event_specs.values()
-        )
+        has_percent_nulls = any(fs.get("percent_nulls", 0) > 0 for fs in event_specs.values())
 
         final_expr = result.routing_expr
 
         if has_outliers or has_percent_nulls:
-            final_expr = self._wrap_conditional_nulls_and_outliers(
-                event_specs, result, first_spec
-            )
+            final_expr = self._wrap_conditional_nulls_and_outliers(event_specs, result, first_spec)
 
         spec = spec.withColumn(
             field_name,
@@ -304,18 +295,13 @@ class ScenarioBuilder:
                         cumulative += o["percent"] / total_pct
                         inner += f"WHEN rand() < {cumulative} THEN {o['expr']} "
                     inner += f"ELSE {outliers[-1]['expr']} END"
-                    val_expr = (
-                        f"CASE WHEN rand() < {total_pct} THEN {inner} "
-                        f"ELSE {val_expr} END"
-                    )
+                    val_expr = f"CASE WHEN rand() < {total_pct} THEN {inner} ELSE {val_expr} END"
 
             pn = field_spec.get("percent_nulls", 0)
             if pn and pn > 0:
                 val_expr = f"CASE WHEN rand() < {pn} THEN NULL ELSE {val_expr} END"
 
-            branches.append(
-                f"WHEN {_EVENT_TYPE_FIELD} = '{event_type_id}' THEN {val_expr}"
-            )
+            branches.append(f"WHEN {_EVENT_TYPE_FIELD} = '{event_type_id}' THEN {val_expr}")
 
         return "CASE " + " ".join(branches) + " ELSE NULL END"
 
@@ -395,20 +381,14 @@ class ScenarioBuilder:
             spec, struct_expr, gen_cols = self._build_struct(
                 spec, field_name, field_spec, event_types=[]
             )
-            spec = spec.withColumn(
-                field_name, spark_type, expr=struct_expr, baseColumn=gen_cols
-            )
+            spec = spec.withColumn(field_name, spark_type, expr=struct_expr, baseColumn=gen_cols)
         elif field_type == "array":
             spec, array_expr, gen_cols = self._build_array(
                 spec, field_name, field_spec, event_types=[]
             )
-            spec = spec.withColumn(
-                field_name, spark_type, expr=array_expr, baseColumn=gen_cols
-            )
+            spec = spec.withColumn(field_name, spark_type, expr=array_expr, baseColumn=gen_cols)
         elif field_type == "map":
-            spec, map_expr, gen_cols = self._build_map(
-                spec, field_name, field_spec, event_types=[]
-            )
+            spec, map_expr, gen_cols = self._build_map(spec, field_name, field_spec, event_types=[])
             base = gen_cols if gen_cols else [_EVENT_TYPE_FIELD]
             spec = spec.withColumn(field_name, spark_type, expr=map_expr, baseColumn=base)
 
@@ -437,9 +417,7 @@ class ScenarioBuilder:
                 spec, field_name, first_spec, event_types
             )
         elif field_type == "map":
-            spec, inner_expr, gen_cols = self._build_map(
-                spec, field_name, first_spec, event_types
-            )
+            spec, inner_expr, gen_cols = self._build_map(spec, field_name, first_spec, event_types)
         else:
             raise ConfigurationError(f"Unknown complex type: {field_type}")
 
@@ -473,15 +451,11 @@ class ScenarioBuilder:
             sub_type = sub_spec.get("type")
 
             if sub_type == "struct":
-                spec, sub_expr, sub_gen = self._build_struct(
-                    spec, col_name, sub_spec, event_types
-                )
+                spec, sub_expr, sub_gen = self._build_struct(spec, col_name, sub_spec, event_types)
                 parts.append(f"'{sub_name}', {sub_expr}")
                 gen_cols.extend(sub_gen)
             elif sub_type == "array":
-                spec, sub_expr, sub_gen = self._build_array(
-                    spec, col_name, sub_spec, event_types
-                )
+                spec, sub_expr, sub_gen = self._build_array(spec, col_name, sub_spec, event_types)
                 parts.append(f"'{sub_name}', {sub_expr}")
                 gen_cols.extend(sub_gen)
             else:
@@ -496,25 +470,31 @@ class ScenarioBuilder:
                         self._hidden_col_count += 1
                         cond_expr = self._event_type_guard(event_types, col_name)
                         from dblstreamgen.scenario.field_builder import _resolve_spark_type
+
                         sub_spark = _resolve_spark_type(sub_spec)
                         temp_name = f"{col_name}__guarded"
                         spec = spec.withColumn(
-                            temp_name, sub_spark, expr=cond_expr,
-                            baseColumn=[_EVENT_TYPE_FIELD, col_name], omit=True
+                            temp_name,
+                            sub_spark,
+                            expr=cond_expr,
+                            baseColumn=[_EVENT_TYPE_FIELD, col_name],
+                            omit=True,
                         )
                         gen_cols.append(temp_name)
                         parts.append(f"'{sub_name}', {temp_name}")
                         self._hidden_col_count += 1
                         continue
                     elif resolution.strategy == "sql_expr":
-                        cond_expr = self._event_type_guard(
-                            event_types, resolution.sql_expr
-                        )
+                        cond_expr = self._event_type_guard(event_types, resolution.sql_expr)
                         from dblstreamgen.scenario.field_builder import _resolve_spark_type
+
                         sub_spark = _resolve_spark_type(sub_spec)
                         spec = spec.withColumn(
-                            col_name, sub_spark, expr=cond_expr,
-                            baseColumn=_EVENT_TYPE_FIELD, omit=True
+                            col_name,
+                            sub_spark,
+                            expr=cond_expr,
+                            baseColumn=_EVENT_TYPE_FIELD,
+                            omit=True,
                         )
                         self._hidden_col_count += 1
                         parts.append(f"'{sub_name}', {col_name}")
@@ -527,9 +507,7 @@ class ScenarioBuilder:
                         parts.append(f"'{sub_name}', {col_name}")
                         continue
 
-                spec = self._field_builder.add_field(
-                    spec, col_name, resolution, hidden=True
-                )
+                spec = self._field_builder.add_field(spec, col_name, resolution, hidden=True)
                 self._hidden_col_count += 1
                 parts.append(f"'{sub_name}', {col_name}")
 
@@ -582,9 +560,7 @@ class ScenarioBuilder:
             # because there are only N distinct event type strings to hash.
             if "__dsg_id" not in gen_cols:
                 gen_cols.append("__dsg_id")
-            size_expr = (
-                f"(abs(hash(__dsg_id)) % {max_size - min_size + 1}) + {min_size}"
-            )
+            size_expr = f"(abs(hash(__dsg_id)) % {max_size - min_size + 1}) + {min_size}"
             array_expr = f"slice(array({elements_str}), 1, {size_expr})"
 
         return spec, array_expr, gen_cols
@@ -629,10 +605,7 @@ class ScenarioBuilder:
             sql_expr = "CASE "
             for i, vd in enumerate(values):
                 pairs = [f"'{k}', '{v}'" for k, v in vd.items()]
-                sql_expr += (
-                    f"WHEN {rand_ref} < {(i + 1) * threshold} "
-                    f"THEN map({', '.join(pairs)}) "
-                )
+                sql_expr += f"WHEN {rand_ref} < {(i + 1) * threshold} THEN map({', '.join(pairs)}) "
             pairs = [f"'{k}', '{v}'" for k, v in values[-1].items()]
             sql_expr += f"ELSE map({', '.join(pairs)}) END"
 
@@ -642,9 +615,7 @@ class ScenarioBuilder:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_field_registry(
-        self, active_types: list[dict]
-    ) -> dict[str, dict[str, dict]]:
+    def _build_field_registry(self, active_types: list[dict]) -> dict[str, dict[str, dict]]:
         """Build field_name -> {event_type_id: field_spec} registry."""
         registry: dict[str, dict[str, dict]] = {}
         for et in active_types:

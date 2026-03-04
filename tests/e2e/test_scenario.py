@@ -26,13 +26,21 @@ _BATCH_CONFIG = {
         },
     },
     "event_types": [
-        {"event_type_id": "order.placed", "weight": 0.60, "fields": {
-            "amount": {"type": "double", "range": [1.0, 500.0]},
-        }},
-        {"event_type_id": "order.cancelled", "weight": 0.40, "fields": {
-            "amount": {"type": "double", "range": [1.0, 500.0]},
-            "reason": {"type": "string", "values": ["changed_mind", "too_slow"]},
-        }},
+        {
+            "event_type_id": "order.placed",
+            "weight": 0.60,
+            "fields": {
+                "amount": {"type": "double", "range": [1.0, 500.0]},
+            },
+        },
+        {
+            "event_type_id": "order.cancelled",
+            "weight": 0.40,
+            "fields": {
+                "amount": {"type": "double", "range": [1.0, 500.0]},
+                "reason": {"type": "string", "values": ["changed_mind", "too_slow"]},
+            },
+        },
     ],
 }
 
@@ -57,6 +65,7 @@ _SERIALIZED_CONFIG = {
 # ---------------------------------------------------------------------------
 # build() — batch
 # ---------------------------------------------------------------------------
+
 
 class TestBatchBuild:
     def test_row_count(self, spark):
@@ -92,8 +101,7 @@ class TestBatchBuild:
 
     def test_event_distribution(self, spark):
         df = Scenario(spark, Config.from_dict(_BATCH_CONFIG)).build(serialize=False)
-        counts = {r["event_name"]: r["count"]
-                  for r in df.groupBy("event_name").count().collect()}
+        counts = {r["event_name"]: r["count"] for r in df.groupBy("event_name").count().collect()}
         total = sum(counts.values())
         assert abs(counts["order.placed"] / total - 0.60) < 0.05
         assert abs(counts["order.cancelled"] / total - 0.40) < 0.05
@@ -102,6 +110,7 @@ class TestBatchBuild:
 # ---------------------------------------------------------------------------
 # build() — serialize=True (JSON)
 # ---------------------------------------------------------------------------
+
 
 class TestSerializedBuild:
     def test_serialize_true_gives_narrow_schema(self, spark):
@@ -128,6 +137,7 @@ class TestSerializedBuild:
         df = Scenario(spark, Config.from_dict(_SERIALIZED_CONFIG)).build(serialize=True)
         sample = df.limit(5).collect()
         import json
+
         for row in sample:
             parsed = json.loads(row["data"])
             assert "event_name" in parsed
@@ -135,11 +145,13 @@ class TestSerializedBuild:
     def test_null_fields_excluded_from_json(self, spark):
         """ignoreNullFields=true means conditional-null fields are absent from JSON."""
         import json
+
         wide = Scenario(spark, Config.from_dict(_SERIALIZED_CONFIG)).build(serialize=False)
         narrow = Scenario(spark, Config.from_dict(_SERIALIZED_CONFIG)).build(serialize=True)
-        placed_ids = {r["event_id"]
-                      for r in wide.filter(F.col("event_name") == "order.placed")
-                                   .select("event_id").collect()}
+        placed_ids = {
+            r["event_id"]
+            for r in wide.filter(F.col("event_name") == "order.placed").select("event_id").collect()
+        }
         narrow_rows = {r["data"] for r in narrow.collect()}
         for data_str in narrow_rows:
             parsed = json.loads(data_str)
@@ -151,6 +163,7 @@ class TestSerializedBuild:
 # ---------------------------------------------------------------------------
 # build() — streaming
 # ---------------------------------------------------------------------------
+
 
 class TestStreamingBuild:
     def test_streaming_df_is_streaming(self, spark):
@@ -167,9 +180,11 @@ class TestStreamingBuild:
 # dry_run()
 # ---------------------------------------------------------------------------
 
+
 class TestDryRun:
     def test_dry_run_returns_dataframe(self, spark):
         from pyspark.sql import DataFrame
+
         df = Scenario(spark, Config.from_dict(_BATCH_CONFIG)).dry_run()
         assert isinstance(df, DataFrame)
 
@@ -181,6 +196,7 @@ class TestDryRun:
 # ---------------------------------------------------------------------------
 # explain()
 # ---------------------------------------------------------------------------
+
 
 class TestExplain:
     def test_explain_returns_string(self, spark):
@@ -202,9 +218,11 @@ class TestExplain:
 # plan()
 # ---------------------------------------------------------------------------
 
+
 class TestPlan:
     def test_plan_returns_list_of_sink_plans(self, spark):
         from dblstreamgen.scenario.types import SinkPlan
+
         plans = Scenario(spark, Config.from_dict(_STREAMING_CONFIG)).plan()
         assert isinstance(plans, list)
         assert all(isinstance(p, SinkPlan) for p in plans)
@@ -224,6 +242,7 @@ class TestPlan:
 # ---------------------------------------------------------------------------
 # __repr__
 # ---------------------------------------------------------------------------
+
 
 class TestRepr:
     def test_repr_batch(self, spark):

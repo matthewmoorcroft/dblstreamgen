@@ -49,8 +49,9 @@ class KinesisStreamWriter(DataSourceStreamWriter):
 
         if self.aws_access_key or self.aws_secret_key:
             if not (self.aws_access_key and self.aws_secret_key):
-                raise ValueError("Both 'aws_access_key_id' and 'aws_secret_access_key' are required")
-
+                raise ValueError(
+                    "Both 'aws_access_key_id' and 'aws_secret_access_key' are required"
+                )
 
     def write(self, iterator):
         """Write partition data to Kinesis with parallel batching."""
@@ -68,19 +69,23 @@ class KinesisStreamWriter(DataSourceStreamWriter):
                     payload, partition_key = row.data, row.partition_key
                 except AttributeError:
                     row_dict = row.asDict()
-                    payload = row_dict.get('data', '')
-                    partition_key = row_dict.get('partition_key', '0')
+                    payload = row_dict.get("data", "")
+                    partition_key = row_dict.get("partition_key", "0")
 
                 if payload is None or partition_key is None:
                     continue
 
-                current_chunk.append({
-                    'Data': payload.encode('utf-8') if isinstance(payload, str) else payload,
-                    'PartitionKey': str(partition_key)
-                })
+                current_chunk.append(
+                    {
+                        "Data": payload.encode("utf-8") if isinstance(payload, str) else payload,
+                        "PartitionKey": str(partition_key),
+                    }
+                )
 
                 if len(current_chunk) >= 500:
-                    futures.append(executor.submit(self._send_prepared_chunk, client, current_chunk))
+                    futures.append(
+                        executor.submit(self._send_prepared_chunk, client, current_chunk)
+                    )
                     current_chunk = []
 
             if current_chunk:
@@ -104,14 +109,14 @@ class KinesisStreamWriter(DataSourceStreamWriter):
         """Send pre-formatted Kinesis records (≤500 records)."""
         try:
             response = client.put_records(StreamName=self.stream_name, Records=kinesis_records)
-            failed = response.get('FailedRecordCount', 0)
+            failed = response.get("FailedRecordCount", 0)
             sent = len(kinesis_records) - failed
 
-            if failed > 0 and 'Records' in response:
+            if failed > 0 and "Records" in response:
                 error_codes = {}
-                for rec in response['Records']:
-                    if 'ErrorCode' in rec:
-                        error_codes[rec['ErrorCode']] = error_codes.get(rec['ErrorCode'], 0) + 1
+                for rec in response["Records"]:
+                    if "ErrorCode" in rec:
+                        error_codes[rec["ErrorCode"]] = error_codes.get(rec["ErrorCode"], 0) + 1
                 if error_codes:
                     logger.error(f"Kinesis errors: {error_codes}")
 
@@ -143,9 +148,10 @@ class KinesisStreamWriter(DataSourceStreamWriter):
         if self.service_credential:
             try:
                 from databricks.service_credentials import getServiceCredentialsProvider
+
                 credential_provider = getServiceCredentialsProvider(self.service_credential)
                 session = boto3.Session(botocore_session=credential_provider)
-                return session.client('kinesis', region_name=self.region, config=client_config)
+                return session.client("kinesis", region_name=self.region, config=client_config)
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to authenticate with service credential '{self.service_credential}'. "
@@ -154,17 +160,17 @@ class KinesisStreamWriter(DataSourceStreamWriter):
 
         elif self.aws_access_key and self.aws_secret_key:
             client_kwargs = {
-                'region_name': self.region,
-                'aws_access_key_id': self.aws_access_key,
-                'aws_secret_access_key': self.aws_secret_key,
-                'config': client_config
+                "region_name": self.region,
+                "aws_access_key_id": self.aws_access_key,
+                "aws_secret_access_key": self.aws_secret_key,
+                "config": client_config,
             }
             if self.aws_session_token:
-                client_kwargs['aws_session_token'] = self.aws_session_token
-            return boto3.client('kinesis', **client_kwargs)
+                client_kwargs["aws_session_token"] = self.aws_session_token
+            return boto3.client("kinesis", **client_kwargs)
 
         else:
-            return boto3.client('kinesis', region_name=self.region, config=client_config)
+            return boto3.client("kinesis", region_name=self.region, config=client_config)
 
 
 class KinesisCommitMessage(WriterCommitMessage):

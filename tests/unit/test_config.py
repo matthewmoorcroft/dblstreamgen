@@ -8,6 +8,7 @@ from dblstreamgen.config import Config, ConfigurationError, load_config_from_dic
 # Helpers
 # -----------------------------------------------------------------------
 
+
 def _minimal_v04(**overrides):
     """Return a minimal valid v0.4 config dict with optional overrides."""
     cfg = {
@@ -49,21 +50,24 @@ def _batch_v04(**overrides):
 # Schema version detection
 # -----------------------------------------------------------------------
 
+
 class TestSchemaDetection:
     def test_v04_detected(self):
         c = Config.from_dict(_minimal_v04())
         assert c.schema_version == "v0.4"
 
     def test_v03_detected(self):
-        c = Config.from_dict({
-            "generation_mode": "batch",
-            "batch_config": {"total_rows": 100, "partitions": 2},
-            "sink_config": {"type": "delta", "partition_key_field": "event_key"},
-            "event_types": [
-                {"event_type_id": "a", "weight": 5, "fields": {}},
-                {"event_type_id": "b", "weight": 5, "fields": {}},
-            ],
-        })
+        c = Config.from_dict(
+            {
+                "generation_mode": "batch",
+                "batch_config": {"total_rows": 100, "partitions": 2},
+                "sink_config": {"type": "delta", "partition_key_field": "event_key"},
+                "event_types": [
+                    {"event_type_id": "a", "weight": 5, "fields": {}},
+                    {"event_type_id": "b", "weight": 5, "fields": {}},
+                ],
+            }
+        )
         assert c.schema_version == "v0.3"
 
     def test_unknown_schema_raises(self):
@@ -74,6 +78,7 @@ class TestSchemaDetection:
 # -----------------------------------------------------------------------
 # v0.4: top-level structure
 # -----------------------------------------------------------------------
+
 
 class TestV04TopLevel:
     def test_valid_streaming_config(self):
@@ -112,6 +117,7 @@ class TestV04TopLevel:
 # -----------------------------------------------------------------------
 # v0.4: scenario section
 # -----------------------------------------------------------------------
+
 
 class TestV04Scenario:
     def test_missing_scenario(self):
@@ -169,6 +175,7 @@ class TestV04Scenario:
 # v0.4: event type weights
 # -----------------------------------------------------------------------
 
+
 class TestV04Weights:
     def test_weights_sum_to_one(self):
         Config.from_dict(_minimal_v04())  # 0.60 + 0.30 + 0.10 = 1.0
@@ -213,6 +220,7 @@ class TestV04Weights:
 # v0.4: event type IDs
 # -----------------------------------------------------------------------
 
+
 class TestV04EventTypeIds:
     def test_valid_ids(self):
         d = _minimal_v04()
@@ -242,6 +250,7 @@ class TestV04EventTypeIds:
 # v0.4: spike validation
 # -----------------------------------------------------------------------
 
+
 class TestV04Spike:
     def _spike_config(self, **spike_overrides):
         d = _minimal_v04()
@@ -263,24 +272,30 @@ class TestV04Spike:
             Config.from_dict(d)
 
     def test_valid_spike_targets(self):
-        d = self._spike_config(targets=[
-            {"event_type_id": "user.page_view", "weight": 0.80},
-            {"event_type_id": "user.click", "weight": 0.20},
-        ])
+        d = self._spike_config(
+            targets=[
+                {"event_type_id": "user.page_view", "weight": 0.80},
+                {"event_type_id": "user.click", "weight": 0.20},
+            ]
+        )
         Config.from_dict(d)
 
     def test_spike_target_unknown_id(self):
-        d = self._spike_config(targets=[
-            {"event_type_id": "nonexistent", "weight": 1.0},
-        ])
+        d = self._spike_config(
+            targets=[
+                {"event_type_id": "nonexistent", "weight": 1.0},
+            ]
+        )
         with pytest.raises(ConfigurationError, match="does not exist"):
             Config.from_dict(d)
 
     def test_spike_target_weights_must_sum_to_one(self):
-        d = self._spike_config(targets=[
-            {"event_type_id": "user.page_view", "weight": 0.50},
-            {"event_type_id": "user.click", "weight": 0.30},
-        ])
+        d = self._spike_config(
+            targets=[
+                {"event_type_id": "user.page_view", "weight": 0.50},
+                {"event_type_id": "user.click", "weight": 0.30},
+            ]
+        )
         with pytest.raises(ConfigurationError, match="must sum to 1.0"):
             Config.from_dict(d)
 
@@ -288,6 +303,7 @@ class TestV04Spike:
 # -----------------------------------------------------------------------
 # v0.4: ramp validation
 # -----------------------------------------------------------------------
+
 
 class TestV04Ramp:
     def test_valid_ramp(self):
@@ -318,6 +334,7 @@ class TestV04Ramp:
 # v0.4: serialization
 # -----------------------------------------------------------------------
 
+
 class TestV04Serialization:
     def test_no_serialization(self):
         c = Config.from_dict(_minimal_v04())
@@ -346,6 +363,7 @@ class TestV04Serialization:
 # -----------------------------------------------------------------------
 # v0.4: derived fields in common_fields
 # -----------------------------------------------------------------------
+
 
 class TestV04DerivedInCommon:
     def test_valid_derived(self):
@@ -379,6 +397,7 @@ class TestV04DerivedInCommon:
 # -----------------------------------------------------------------------
 # Properties & classmethods
 # -----------------------------------------------------------------------
+
 
 class TestConfigAccess:
     def test_source_name_dict(self):
@@ -422,29 +441,40 @@ class TestConfigAccess:
 # v0.3 backward compat (legacy)
 # -----------------------------------------------------------------------
 
+
 class TestV03Compat:
     def test_v03_batch_config_passes(self):
-        c = Config.from_dict({
-            "generation_mode": "batch",
-            "batch_config": {"total_rows": 1000, "partitions": 4},
-            "sink_config": {"type": "delta", "partition_key_field": "event_key"},
-            "event_types": [
-                {"event_type_id": "a", "weight": 6,
-                 "fields": {"x": {"type": "int", "range": [1, 10]}}},
-                {"event_type_id": "b", "weight": 4,
-                 "fields": {"x": {"type": "int", "range": [1, 10]}}},
-            ],
-        })
+        c = Config.from_dict(
+            {
+                "generation_mode": "batch",
+                "batch_config": {"total_rows": 1000, "partitions": 4},
+                "sink_config": {"type": "delta", "partition_key_field": "event_key"},
+                "event_types": [
+                    {
+                        "event_type_id": "a",
+                        "weight": 6,
+                        "fields": {"x": {"type": "int", "range": [1, 10]}},
+                    },
+                    {
+                        "event_type_id": "b",
+                        "weight": 4,
+                        "fields": {"x": {"type": "int", "range": [1, 10]}},
+                    },
+                ],
+            }
+        )
         assert c.schema_version == "v0.3"
 
     def test_v03_integer_weights_enforced(self):
         with pytest.raises(ConfigurationError, match="positive integers"):
-            Config.from_dict({
-                "generation_mode": "batch",
-                "batch_config": {"total_rows": 100, "partitions": 2},
-                "sink_config": {"type": "delta"},
-                "event_types": [
-                    {"event_type_id": "a", "weight": 0.5, "fields": {}},
-                    {"event_type_id": "b", "weight": 0.5, "fields": {}},
-                ],
-            })
+            Config.from_dict(
+                {
+                    "generation_mode": "batch",
+                    "batch_config": {"total_rows": 100, "partitions": 2},
+                    "sink_config": {"type": "delta"},
+                    "event_types": [
+                        {"event_type_id": "a", "weight": 0.5, "fields": {}},
+                        {"event_type_id": "b", "weight": 0.5, "fields": {}},
+                    ],
+                }
+            )

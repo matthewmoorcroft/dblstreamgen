@@ -33,9 +33,7 @@ class ScenarioRunner:
         self._builder = builder
         self._config = config
 
-    def run(
-        self, sink_factory: SinkFactory, checkpoint_base: str
-    ) -> ScenarioResult:
+    def run(self, sink_factory: SinkFactory, checkpoint_base: str) -> ScenarioResult:
         """Run full scenario.  Blocks until duration_seconds expires.
 
         All active queries are stopped in a ``finally`` block on any exception.
@@ -104,7 +102,9 @@ class ScenarioRunner:
                     queries_started += 1
                     logger.info(
                         "Ramp step %d started: rate=%d, checkpoint=%s",
-                        step_num, new_rate, cp_ramp,
+                        step_num,
+                        new_rate,
+                        cp_ramp,
                     )
 
                     # Make-before-break: new query is live; now stop oldest
@@ -119,7 +119,9 @@ class ScenarioRunner:
                     rolling.append((q_ramp, new_rate))
 
                     if max_rate is not None and new_rate >= int(max_rate):
-                        logger.info("Ramp: reached max_rows_per_second=%d, stopping ramp.", max_rate)
+                        logger.info(
+                            "Ramp: reached max_rows_per_second=%d, stopping ramp.", max_rate
+                        )
                         break
 
             # -- Spike (only if no ramp) ----------------------------------
@@ -142,9 +144,7 @@ class ScenarioRunner:
                 q_spike = sink_factory(spike_df, cp_spike)
                 active_queries.append(q_spike)
                 queries_started += 1
-                logger.info(
-                    "Spike query started: rate=%d, duration=%ds", add_rate, for_s
-                )
+                logger.info("Spike query started: rate=%d, duration=%ds", add_rate, for_s)
 
                 time.sleep(for_s)
 
@@ -195,9 +195,7 @@ class ScenarioRunner:
 
         duration = int(scenario["duration_seconds"])
         baseline_rate = int(scenario["baseline_rows_per_second"])
-        active = [
-            et for et in self._config.event_types if float(et.get("weight", 0)) > 0
-        ]
+        active = [et for et in self._config.event_types if float(et.get("weight", 0)) > 0]
         active_ids = [et["event_type_id"] for et in active]
         active_weights = {et["event_type_id"]: float(et["weight"]) for et in active}
 
@@ -287,9 +285,7 @@ class ScenarioRunner:
 
                 if targets:
                     spike_ids = [t["event_type_id"] for t in targets]
-                    spike_weights = {
-                        t["event_type_id"]: float(t["weight"]) for t in targets
-                    }
+                    spike_weights = {t["event_type_id"]: float(t["weight"]) for t in targets}
                 else:
                     spike_ids = active_ids
                     spike_weights = active_weights
@@ -346,9 +342,7 @@ class ScenarioRunner:
         """Build event_types list for the spike query."""
         targets = spike_cfg.get("targets")
         if targets:
-            types_by_id = {
-                et["event_type_id"]: et for et in self._config.event_types
-            }
+            types_by_id = {et["event_type_id"]: et for et in self._config.event_types}
             result = []
             for t in targets:
                 eid = t["event_type_id"]
@@ -357,8 +351,4 @@ class ScenarioRunner:
                 result.append(base)
             return result
         else:
-            return [
-                et
-                for et in self._config.event_types
-                if float(et.get("weight", 0)) > 0
-            ]
+            return [et for et in self._config.event_types if float(et.get("weight", 0)) > 0]

@@ -3,5 +3,5 @@
 from dblstreamgen.orchestrator.stream_orchestrator import StreamOrchestrator
 
 __all__ = [
-    'StreamOrchestrator',
+    "StreamOrchestrator",
 ]
