@@ -101,7 +101,7 @@ dependencies = [
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
-test-cov = "pytest --cov-report=term-missing --cov-config=pyproject.toml --cov=src/dblstreamgen --cov-report=html {args:tests}"
+test-cov = "pytest --cov-report=term-missing --cov-config=pyproject.toml --cov=src/dblstreamgen --cov-report=html --cov-report=xml {args:tests}"
 lint = "ruff check {args:src tests}"
 lint-fix = "ruff check --fix {args:src tests}"
 format = "ruff format {args:src tests}"
