@@ -86,13 +86,25 @@ packages = ["src/dblstreamgen"]
 [tool.hatch.version]
 path = "src/dblstreamgen/__init__.py"
 
-# Hatch environment configuration
+# Hatch environment configuration (aligned with dbldatagen)
 [tool.hatch.envs.default]
+python = "3.10"
+path = ".venv"
 dependencies = [
-    "pyspark>=3.3.0",
+    # pyspark and its required transitive deps (not always auto-installed)
+    "pyspark[sql]>=3.4.1",
+    "numpy>=1.21.5",
+    "pandas>=1.4.4",
+    "pyarrow>=8.0.0",
+    "py4j>=0.10.9",
+    "python-dateutil>=2.8.2",
+    # dbldatagen and its transitive deps
     "dbldatagen>=0.4.0",
     "jmespath>=1.0.0",
+    "pyparsing>=3.0.9",
+    # optional extras used in tests
     "faker>=18.0.0",
+    # dev/test tooling
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1.0",
