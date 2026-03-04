@@ -5,7 +5,6 @@ real DataGenerator, including type correctness, range bounds, null rates,
 step granularity, and equal-weight distribution.
 """
 
-import pytest
 import dbldatagen as dg
 from pyspark.sql import functions as F
 

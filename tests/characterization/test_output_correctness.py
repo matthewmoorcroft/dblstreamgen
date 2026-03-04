@@ -13,7 +13,6 @@ Run:  pytest tests/characterization/ -v
 """
 
 import re
-import uuid
 
 import pytest
 from pyspark.sql import DataFrame

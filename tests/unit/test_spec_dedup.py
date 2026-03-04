@@ -3,8 +3,6 @@
 import pytest
 
 from dblstreamgen.scenario.spec_dedup import (
-    DeduplicationResult,
-    HiddenColumn,
     SpecDeduplicator,
     _normalize_temporal,
 )

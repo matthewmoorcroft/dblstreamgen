@@ -8,7 +8,7 @@ Supports two schema versions:
 import logging
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import yaml
 
@@ -98,19 +98,19 @@ class Config:
 
     @property
     def event_types(self) -> list:
-        return self.data.get("event_types", [])
+        return cast(list, self.data.get("event_types", []))
 
     @property
     def common_fields(self) -> dict:
-        return self.data.get("common_fields", {})
+        return cast(dict, self.data.get("common_fields", {}))
 
     @property
     def generation_mode(self) -> str:
-        return self.data.get("generation_mode", "streaming")
+        return cast(str, self.data.get("generation_mode", "streaming"))
 
     @property
     def scenario(self) -> dict:
-        return self.data.get("scenario", {})
+        return cast(dict, self.data.get("scenario", {}))
 
     @property
     def serialization(self) -> Optional[dict]:

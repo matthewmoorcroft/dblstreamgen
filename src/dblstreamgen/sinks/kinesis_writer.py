@@ -2,7 +2,6 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple
 
 import boto3
 from pyspark.sql.datasource import DataSource, DataSourceStreamWriter, WriterCommitMessage
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 class KinesisDataSource(DataSource):
     """
     PySpark DataSource for AWS Kinesis with optimized parallel batching.
-    
+
     Kinesis API limits:
     - 1000 records/sec per shard
     - 500 records per PutRecords call
@@ -101,7 +100,7 @@ class KinesisStreamWriter(DataSourceStreamWriter):
 
         return KinesisCommitMessage(total_sent, total_failed)
 
-    def _send_prepared_chunk(self, client, kinesis_records) -> Tuple[int, int]:
+    def _send_prepared_chunk(self, client, kinesis_records) -> tuple[int, int]:
         """Send pre-formatted Kinesis records (≤500 records)."""
         try:
             response = client.put_records(StreamName=self.stream_name, Records=kinesis_records)

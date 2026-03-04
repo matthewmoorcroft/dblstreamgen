@@ -4,7 +4,6 @@ import pytest
 
 from dblstreamgen.config import Config, ConfigurationError, load_config_from_dict
 
-
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------

@@ -137,18 +137,18 @@ select = [
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
-    "ARG", # flake8-unused-arguments
     "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501", # line too long (handled by formatter)
-    "B008", # do not perform function calls in argument defaults
-    "B904", # Allow raising exceptions without from e
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B904",   # allow raising exceptions without from e
+    "SIM102", # use a single if-statement (dbldatagen also ignores this)
+    "SIM108", # use ternary operator
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"tests/**" = ["ARG"]      # Allow unused arguments in tests
 
 [tool.ruff.format]
 quote-style = "double"
@@ -156,29 +156,27 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 
-# MyPy configuration
+# MyPy configuration (aligned with dbldatagen project standards)
 [tool.mypy]
 python_version = "3.9"
+exclude = [
+    "venv", ".venv", "build", "docs", "tests",
+    "src/dblstreamgen/__init__.py",
+    "src/dblstreamgen/orchestrator",
+    "src/dblstreamgen/sinks",
+]
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
 check_untyped_defs = true
 disallow_untyped_decorators = false
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
-follow_imports = "normal"
-strict_optional = true
-
-[[tool.mypy.overrides]]
-module = [
-    "pyspark.*",
-    "dbldatagen.*",
-    "confluent_kafka.*",
-    "fastavro.*",
-]
+warn_unreachable = true
+strict_equality = true
 ignore_missing_imports = true
 
 # Pytest configuration

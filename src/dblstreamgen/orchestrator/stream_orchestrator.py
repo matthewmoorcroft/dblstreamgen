@@ -1,7 +1,7 @@
 """Stream orchestrator for managing multiple event type streams."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import dbldatagen as dg
 from pyspark.sql import DataFrame, SparkSession
@@ -18,7 +18,7 @@ class StreamOrchestrator:
     def __init__(self, spark: SparkSession, config: Config):
         """
         Initialize orchestrator.
-        
+
         Args:
             spark: Active SparkSession
             config: Validated configuration
@@ -26,9 +26,9 @@ class StreamOrchestrator:
         self.spark = spark
         self.config = config
 
-    def calculate_rates(self) -> Dict[str, float]:
+    def calculate_rates(self) -> dict[str, float]:
         """Calculate rows per second for each event type based on weights (streaming mode only).
-        
+
         Weights are positive integers (e.g., [6, 3, 1]) that are normalized
         to proportions before multiplying by total_rows_per_second.
         """
@@ -49,17 +49,17 @@ class StreamOrchestrator:
     def create_unified_stream(self, serialize: bool = True) -> DataFrame:
         """
         Create unified stream with all fields generated via dbldatagen.
-        
+
         Args:
             serialize: If True, returns (partition_key, data) format for Kinesis/Kafka.
                       If False, returns wide schema with typed columns for Delta/Parquet/JSON/CSV.
                       Default: True (backward compatible)
-        
+
         Returns:
             DataFrame - Format depends on serialize parameter:
                 - serialize=True: Two columns (partition_key, data) with JSON payload
                 - serialize=False: Wide schema with all typed columns
-        
+
         Examples:
             >>> # For Kinesis/Kafka (message-based sinks)
             >>> stream = orchestrator.create_unified_stream(serialize=True)
@@ -67,7 +67,7 @@ class StreamOrchestrator:
             root
              |-- partition_key: string
              |-- data: string (JSON)
-            
+
             >>> # For Delta/Parquet/JSON/CSV (file/table-based sinks)
             >>> stream = orchestrator.create_unified_stream(serialize=False)
             >>> stream.printSchema()
@@ -156,7 +156,7 @@ class StreamOrchestrator:
 
     def _add_common_fields_to_spec(self, spec) -> dg.DataGenerator:
         """Add common fields using dbldatagen, supporting nested types.
-        
+
         For string/boolean fields with multiple values+weights (no raw expr),
         uses dbldatagen's native values/weights/random=True for correct
         weighted distribution. All other fields use SQL expr approach.
@@ -219,15 +219,15 @@ class StreamOrchestrator:
 
         return spec
 
-    def _can_use_native_weights(self, field_spec: Dict[str, Any]) -> bool:
+    def _can_use_native_weights(self, field_spec: dict[str, Any]) -> bool:
         """Check if a field can use dbldatagen's native values/weights instead of SQL CASE.
-        
+
         Native weights work for any type when:
         - No raw expr passthrough
         - No outliers (native doesn't support layered outlier injection)
         - No faker (handled separately)
         - Has multiple explicit values
-        
+
         dbldatagen's values parameter accepts strings, numbers, booleans, and
         constants conforming to the column type.
         """
@@ -240,7 +240,7 @@ class StreamOrchestrator:
         values = field_spec.get('values', [])
         return len(values) > 1
 
-    def _add_native_weighted_field(self, spec, field_name: str, field_spec: Dict[str, Any]) -> dg.DataGenerator:
+    def _add_native_weighted_field(self, spec, field_name: str, field_spec: dict[str, Any]) -> dg.DataGenerator:
         """Add a field using dbldatagen's native values/weights (no SQL CASE bias)."""
         field_type = self._get_spark_type(field_spec)
         values = field_spec.get('values')
@@ -255,9 +255,9 @@ class StreamOrchestrator:
 
         return spec.withColumn(field_name, field_type, **kwargs)
 
-    def _add_conditional_fields_to_spec(self, spec, field_registry: Dict) -> dg.DataGenerator:
+    def _add_conditional_fields_to_spec(self, spec, field_registry: dict) -> dg.DataGenerator:
         """Add conditional fields with per-event-type CASE expressions, supporting nested types.
-        
+
         The field_registry maps field_name -> {event_type_id: field_spec, ...}
         so each event type can have different values/ranges for the same field.
         """
@@ -333,7 +333,7 @@ class StreamOrchestrator:
 
                 # Generate hidden faker columns for any event-type spec that uses faker.
                 # Each event type gets its own hidden column to avoid collisions.
-                faker_hidden_map: Dict[str, str] = {}
+                faker_hidden_map: dict[str, str] = {}
                 for event_type_id, field_spec in event_type_specs.items():
                     if 'faker' in field_spec:
                         safe_et_id = event_type_id.replace('.', '_')
@@ -365,11 +365,11 @@ class StreamOrchestrator:
 
     def _add_derived_fields_to_spec(self, spec) -> dg.DataGenerator:
         """Add derived fields that reference other generated columns.
-        
+
         Derived fields use SQL expressions that can reference any previously
         generated column (common fields, conditional fields, or struct sub-fields).
         They are added last to ensure all dependencies exist.
-        
+
         Config format:
             derived_fields:
               received_timestamp:
@@ -399,9 +399,9 @@ class StreamOrchestrator:
 
         return spec
 
-    def _build_field_registry(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def _build_field_registry(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Build registry mapping field_name -> event_type_id -> field_spec.
-        
+
         Each event type's field spec is stored independently so that
         different event types can have different values/ranges for the
         same field name (e.g., error_type = 'FATAL' vs 'NON_FATAL').
@@ -416,9 +416,9 @@ class StreamOrchestrator:
                 registry[field_name][event_type_id] = field_spec
         return registry
 
-    def _build_faker_text_generator(self, field_spec: Dict[str, Any]):
+    def _build_faker_text_generator(self, field_spec: dict[str, Any]):
         """Create a dbldatagen PyfuncText from a faker field spec.
-        
+
         Uses fakerText() which wraps Python Faker as a Pandas UDF.
         Raises ImportError with an actionable message if faker is not installed.
         """
@@ -434,9 +434,9 @@ class StreamOrchestrator:
         args = field_spec.get('faker_args', {})
         return fakerText(method, **args)
 
-    def _add_faker_hidden_column(self, spec, field_name: str, field_spec: Dict[str, Any]):
+    def _add_faker_hidden_column(self, spec, field_name: str, field_spec: dict[str, Any]):
         """Generate a hidden faker column (omit=True) and return (spec, column_name).
-        
+
         The hidden column holds UDF-generated Faker values that can later be
         referenced by name in SQL expressions for composition with outliers,
         percent_nulls, and CASE WHEN logic.
@@ -446,9 +446,9 @@ class StreamOrchestrator:
         spec = spec.withColumn(hidden_name, "string", text=text_gen, omit=True)
         return spec, hidden_name
 
-    def _field_needs_rand_column(self, field_spec: Dict[str, Any]) -> bool:
+    def _field_needs_rand_column(self, field_spec: dict[str, Any]) -> bool:
         """Check if a field's weighted expression needs a shared rand column.
-        
+
         Returns True for any multi-value field that will generate a CASE WHEN
         expression, to avoid the sequential-rand() bias where each WHEN branch
         evaluates rand() independently.
@@ -460,21 +460,21 @@ class StreamOrchestrator:
         values = field_spec.get('values', [])
         return len(values) > 1
 
-    def _generate_sql_expression(self, field_spec: Dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
+    def _generate_sql_expression(self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
         """
         Generate SQL expression for field generation.
-        
+
         Layered wrapping applied in order:
         1. Core value expression (from type/values/range, raw expr, or faker hidden col)
         2. Outlier injection (randomly replace with bad/edge-case values)
         3. Null injection (randomly replace with NULL)
-        
+
         Args:
             field_spec: Field specification with type and parameters
             rand_col: Optional name of a pre-generated rand() column to use
                       instead of inline rand() calls (fixes distribution bias)
             faker_col: Optional hidden column name containing Faker-generated values
-            
+
         Returns:
             SQL expression string
         """
@@ -505,7 +505,7 @@ class StreamOrchestrator:
 
         return expr
 
-    def _format_sql_literal(self, value, field_spec: Dict[str, Any]) -> str:
+    def _format_sql_literal(self, value, field_spec: dict[str, Any]) -> str:
         """Format a Python value as a SQL literal appropriate for the field type."""
         field_type = field_spec.get('type')
         if field_type == 'string':
@@ -527,9 +527,9 @@ class StreamOrchestrator:
         else:
             return str(value)
 
-    def _generate_values_expression(self, field_spec: Dict[str, Any], rand_col: str = None) -> str:
+    def _generate_values_expression(self, field_spec: dict[str, Any], rand_col: str = None) -> str:
         """Generate a SQL CASE expression selecting from an explicit values list.
-        
+
         Works for any type — the only difference is how literals are formatted,
         which is handled by _format_sql_literal.
         """
@@ -558,15 +558,15 @@ class StreamOrchestrator:
             sql_expr += f"ELSE {self._format_sql_literal(values[-1], field_spec)} END"
             return sql_expr
 
-    def _generate_value_expression(self, field_spec: Dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
+    def _generate_value_expression(self, field_spec: dict[str, Any], rand_col: str = None, faker_col: str = None) -> str:
         """Generate the core value SQL expression (without null/outlier wrapping).
-        
+
         Resolution order:
         1. Raw 'expr' passthrough — arbitrary SQL from config
         2. Faker hidden column reference
         3. Explicit 'values' list — works for ALL types (string, int, float, etc.)
         4. Type-specific default generation (range for numerics, begin/end for dates, etc.)
-        
+
         Args:
             field_spec: Field specification with type and parameters
             rand_col: Optional pre-generated rand column name. When provided,
@@ -656,10 +656,10 @@ class StreamOrchestrator:
         else:
             raise ValueError(f"Unsupported field type: {field_type}")
 
-    def _process_array_field(self, spec, field_name: str, field_spec: Dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_array_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
         """
         Process array field by generating multiple columns and combining them.
-        
+
         Returns:
             tuple: (spec with array columns added, array_field_names)
         """
@@ -717,13 +717,13 @@ class StreamOrchestrator:
 
         return spec, array_expr, element_columns
 
-    def _process_struct_field(self, spec, field_name: str, field_spec: Dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_struct_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
         """
         Process struct field by recursively generating nested fields.
-        
+
         For weighted multi-value sub-fields, adds a hidden _rand column
         to avoid the sequential-rand() distribution bias.
-        
+
         Returns:
             tuple: (spec with struct fields added, struct_expr)
         """
@@ -790,13 +790,13 @@ class StreamOrchestrator:
 
         return spec, struct_expr, generated_columns
 
-    def _process_map_field(self, spec, field_name: str, field_spec: Dict[str, Any], event_type_field: str, event_types: list) -> tuple:
+    def _process_map_field(self, spec, field_name: str, field_spec: dict[str, Any], event_type_field: str, event_types: list) -> tuple:
         """
         Process map field by generating discrete map values.
-        
+
         Uses a hidden rand column to avoid sequential-rand() bias
         when multiple weighted map values are configured.
-        
+
         Returns:
             tuple: (spec with map column added, map_expr, generated_cols)
         """
@@ -804,8 +804,8 @@ class StreamOrchestrator:
         weights = field_spec.get('weights')
 
         if not values:
-            key_type = field_spec.get('key_type', 'string')
-            value_type = field_spec.get('value_type', 'string')
+            field_spec.get('key_type', 'string')
+            field_spec.get('value_type', 'string')
             return spec, "map()", []
 
         generated_cols = []
@@ -840,7 +840,7 @@ class StreamOrchestrator:
 
         return spec, sql_expr, generated_cols
 
-    def _get_spark_type(self, field_spec: Dict[str, Any]) -> str:
+    def _get_spark_type(self, field_spec: dict[str, Any]) -> str:
         """Map field type to Spark SQL type string."""
         field_type = field_spec.get('type')
 
@@ -895,7 +895,7 @@ class StreamOrchestrator:
     def _serialize_wide_schema(self, df: DataFrame) -> DataFrame:
         """
         Serialize wide schema to flat JSON for Kinesis.
-        
+
         Creates output with:
         - partition_key: Top-level column for Kinesis routing
         - data: Flat JSON with ALL fields (goes into Kinesis Data field)

@@ -1,6 +1,5 @@
 """Integration tests for ScenarioBuilder.  Requires Spark."""
 
-import pytest
 from pyspark.sql import functions as F
 
 from dblstreamgen.config import Config
@@ -106,7 +105,7 @@ class TestDerivedFields:
         })
         df = ScenarioBuilder(spark, config).build()
         assert "is_high" in df.columns
-        high_rows = df.filter(F.col("is_high") == True).select("val")
+        high_rows = df.filter(F.col("is_high")).select("val")
         assert high_rows.filter(F.col("val") <= 50).count() == 0
 
 
